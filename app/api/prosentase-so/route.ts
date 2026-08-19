@@ -160,9 +160,44 @@ export async function GET(request: NextRequest) {
 
     const response = await fetch(apiUrl, {
       method: "GET",
+
       headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+
+        "Api-Key": process.env.ALFA_API_KEY || "",
+
         "App-Name": "CEXP-CLOUD",
+        "App-Uid": process.env.ALFA_APP_UID || "",
+
+        "Branch-Id": process.env.ALFA_BRANCH_ID || "",
+        "Class-Store": process.env.ALFA_CLASS_STORE || "A",
+
+        "Company-Ext": "",
+        "Company-Id": process.env.ALFA_COMPANY_ID || "",
+
+        "Ip-Addr": "0.0.0.0",
+
+        "Mac-Addr": process.env.ALFA_MAC_ADDR || "",
+
+        Platform: "ANDROID",
+
+        "Shard-Id": "",
+
+        Sn: process.env.ALFA_SN || "",
+
+        "Store-Id": process.env.ALFA_STORE_ID || "",
+        "Store-Id-Ext": "",
+
+        "User-Id": process.env.ALFA_USER_ID || "",
+
+        "Version-App": process.env.ALFA_VERSION_APP || "",
+        "Version-Code": process.env.ALFA_VERSION_CODE || "",
+
+        "User-Agent":
+          "Dalvik/2.1.0 (Linux; U; Android 15; Infinix X6885 Build/AP3A.240905.015.A2)",
       },
+
       cache: "no-store",
     });
 

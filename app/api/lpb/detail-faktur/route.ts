@@ -1,157 +1,127 @@
 import { NextRequest } from "next/server";
 
+
 const ALFASTORE_URL =
-  "https://app.alfastore.co.id/prd/api/lpb/tablet/lpb/get_det_faktur";
+"https://app.alfastore.co.id/prd/api/lpb/tablet/lpb/get_det_faktur/";
 
 
-export async function GET(request: NextRequest) {
+export async function POST(request: NextRequest) {
 
-  try {
+try {
 
-    const { searchParams } =
-      new URL(request.url);
 
+const body = await request.json();
 
-    const storeId =
-      searchParams.get("storeId");
 
-    const faktur =
-      searchParams.get("faktur");
+const response = await fetch(
+  ALFASTORE_URL,
+  {
 
+    method:"POST",
 
-    if(!storeId || !faktur){
+    headers:{
 
-      return Response.json(
-        {
-          success:false,
-          message:"storeId dan faktur wajib diisi"
-        },
-        {
-          status:400
-        }
-      );
+      "App-Name":"LPB-CLOUD",
 
-    }
+      "Version-App":"V.2025.11.25.04",
 
+      "Version-Code":"30",
 
-    const apiUrl =
-      `${ALFASTORE_URL}?`+
-      `storeId=${encodeURIComponent(storeId)}`+
-      `&faktur=${encodeURIComponent(faktur)}`;
+      "User-Agent":
+      "Dalvik/2.1.0 (Linux; U; Android 15)",
 
+      "App-Uid":"23067884",
 
+      "Store-Id":
+      body.storeId,
 
-    const response =
-      await fetch(apiUrl,{
+      "Api-Key":
+      "ivOZX9MLMKrjlL8R23uFlaryMRIvGMXG",
 
-        method:"GET",
+      "AndroidId":
+      "712f8db18eeb1816",
 
-        headers:{
+      "Platform":"ANDROID",
 
+      "Accept":"application/json",
 
-          "App-Name":
-          "LPB-CLOUD",
+      "Content-Type":
+      "application/json"
 
+    },
 
-          "Version-App":
-          "V.2025.11.25.04",
 
+    body:JSON.stringify({
 
-          "Version-Code":
-          "30",
+      storeId:
+      body.storeId,
 
+      faktur:
+      body.faktur
 
-          "User-Agent":
-          "Dalvik/2.1.0 (Linux; U; Android 15; Infinix X6885 Build/AP3A.240905.015.A2)",
+    }),
 
 
-          "App-Uid":
-          "23067884",
-
-
-          "Store-Id":
-          storeId,
-
-
-          "Api-Key":
-          "ivOZX9MLMKrjlL8R23uFlaryMRIvGMXG",
-
-
-          "AndroidId":
-          "712f8db18eeb1816",
-
-
-          "Platform":
-          "ANDROID",
-
-
-          "Accept":
-          "application/json",
-
-
-          "Accept-Encoding":
-          "gzip"
-
-
-        },
-
-        cache:"no-store"
-
-      });
-
-
-
-    const result =
-      await response.text();
-
-
-
-    return new Response(
-      result,
-      {
-
-        status:response.status,
-
-        headers:{
-
-          "Content-Type":
-          response.headers.get("content-type")
-          ||
-          "application/json",
-
-          "Cache-Control":
-          "no-store"
-
-        }
-
-      }
-    );
-
-
-  } catch(error){
-
-
-    return Response.json(
-      {
-
-        success:false,
-
-        message:"Gagal mengambil LPB",
-
-        error:
-        error instanceof Error
-        ?
-        error.message
-        :
-        String(error)
-
-      },
-      {
-        status:500
-      }
-    );
-
+    cache:"no-store"
 
   }
+);
+
+
+
+const result =
+await response.text();
+
+
+
+return new Response(
+result,
+{
+
+status:response.status,
+
+headers:{
+
+"Content-Type":
+"application/json",
+
+"Cache-Control":
+"no-store"
+
+}
+
+}
+);
+
+
+
+}
+catch(error){
+
+
+return Response.json(
+{
+
+success:false,
+
+message:"LPB Error",
+
+error:
+error instanceof Error
+?
+error.message
+:
+String(error)
+
+},
+
+{
+status:500
+}
+
+);
+
+
+}
 
 }

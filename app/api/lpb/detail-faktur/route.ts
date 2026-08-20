@@ -2,176 +2,167 @@ import { NextRequest } from "next/server";
 
 
 const ALFASTORE_URL =
-  "https://app.alfastore.co.id/prd/api/lpb/tablet/lpb/get_det_faktur";
+"https://app.alfastore.co.id/prd/api/lpb/tablet/lpb/get_det_faktur/";
 
 
 export async function GET(
-  request: NextRequest
-) {
+request: NextRequest
+){
 
-  try {
+try {
 
-    const { searchParams } =
-      new URL(request.url);
 
+const {searchParams} =
+new URL(request.url);
 
-    const storeId =
-      searchParams.get("storeId");
 
-    const faktur =
-      searchParams.get("faktur");
+const storeId =
+searchParams.get("storeId");
 
+const faktur =
+searchParams.get("faktur");
 
-    if (!storeId || !faktur) {
 
-      return Response.json(
-        {
-          success:false,
-          message:
-          "storeId dan faktur wajib diisi"
-        },
-        {
-          status:400
-        }
-      );
+if(!storeId || !faktur){
 
-    }
+return Response.json(
+{
+success:false,
+message:"storeId dan faktur wajib"
+},
+{
+status:400
+}
+);
 
+}
 
-    const response =
-      await fetch(
-        ALFASTORE_URL,
-        {
 
-          method:"POST",
 
-          headers:{
+const response =
+await fetch(
+ALFASTORE_URL,
+{
 
-            "App-Name":
-            "LPB-CLOUD",
+method:"POST",
 
-            "Version-App":
-            "V.2025.11.25.04",
+headers:{
 
-            "Version-Code":
-            "30",
 
-            "User-Agent":
-            "Dalvik/2.1.0 (Linux; U; Android 15; Infinix X6885 Build/AP3A.240905.015.A2)",
+"App-Name":
+"LPB-CLOUD",
 
 
-            "App-Uid":
-            "23067884",
+"Version-App":
+"V.2025.11.25.04",
 
 
-            "Store-Id":
-            storeId,
+"Version-Code":
+"30",
 
 
-            "Api-Key":
-            "ivOZX9MLMKrjlL8R23uFlaryMRIvGMXG",
+"User-Agent":
+"Dalvik/2.1.0 (Linux; U; Android 15)",
 
 
-            "AndroidId":
-            "712f8db18eeb1816",
+"App-Uid":
+"23067884",
 
 
-            "Platform":
-            "ANDROID",
+"Store-Id":
+storeId,
 
 
-            "Accept":
-            "application/json",
+"Api-Key":
+"ivOZX9MLMKrjlL8R23uFlaryMRIvGMXG",
 
 
-            "Content-Type":
-            "application/json",
+"AndroidId":
+"712f8db18eeb1816",
 
 
-            "Accept-Encoding":
-            "gzip"
+"Platform":
+"ANDROID",
 
-          },
 
+"Content-Type":
+"application/json",
 
-          body:
-          JSON.stringify({
 
-            storeId:
-            storeId,
+"Accept":
+"application/json"
 
-            faktur:
-            faktur
+},
 
-          }),
 
+body:JSON.stringify({
 
-          cache:
-          "no-store"
+storeId:storeId,
 
-        }
-      );
+faktur:faktur
 
+}),
 
 
-    const result =
-      await response.text();
+cache:"no-store"
 
+}
+);
 
 
-    return new Response(
-      result,
-      {
 
-        status:
-        response.status,
+const result =
+await response.text();
 
 
-        headers:{
 
-          "Content-Type":
-          response.headers.get(
-            "content-type"
-          )
-          ||
-          "application/json; charset=utf-8",
+return new Response(
+result,
+{
 
+status:response.status,
 
-          "Cache-Control":
-          "no-store"
+headers:{
 
-        }
+"Content-Type":
+"application/json",
 
-      }
-    );
+"Cache-Control":
+"no-store"
 
+}
 
+}
+);
 
-  } catch(error) {
 
 
-    return Response.json(
-      {
+}
+catch(error){
 
-        success:false,
 
-        message:
-        "Gagal mengambil detail faktur LPB",
+return Response.json(
+{
 
+success:false,
 
-        error:
-        error instanceof Error
-        ?
-        error.message
-        :
-        String(error)
+message:
+"Gagal mengambil LPB",
 
-      },
-      {
-        status:500
-      }
-    );
+error:
+error instanceof Error
+?
+error.message
+:
+String(error)
 
-  }
+},
+{
+status:500
+}
+);
+
+
+}
 
 }

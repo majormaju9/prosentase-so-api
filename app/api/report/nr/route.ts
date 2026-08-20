@@ -4,256 +4,251 @@ const ALFASTORE_URL =
   "https://app.alfastore.co.id/prd/api/rpt/laporan/register_dokumen_toko_NR";
 
 
-function fixHtml(html: string) {
+function optimizeHtml(html: string) {
 
   return html
+    // hapus script yang tidak diperlukan
     .replace(
       /<script[\s\S]*?<\/script>/gi,
       ""
     )
+
+    // tambahkan CSS override tanpa merusak tabel asli
     .replace(
-      /<link[^>]*>/gi,
-      ""
-    )
-    .replace(
-      /<style[^>]*>[\s\S]*?<\/style>/gi,
-      ""
-    )
-    +
-    `
+      "</head>",
+      `
+
 <style>
 
 body {
 
-  margin:0;
-  padding:10px;
+    margin:0;
+    padding:10px;
 
-  background:white;
-
-  font-family:
-  Arial,
-  Helvetica,
-  sans-serif;
+    font-family: Arial, Helvetica, sans-serif;
 
 }
 
+
+/* pertahankan tabel asli AlfaStore */
 
 table {
 
-  border-collapse:collapse !important;
-
-  width:100% !important;
+    border-collapse: collapse !important;
 
 }
 
+
+/* garis tabel */
 
 td,
 th {
 
-  border:1px solid #000 !important;
-
-  padding:3px !important;
-
-  font-size:11px !important;
+    border-color:#000 !important;
 
 }
 
 
-th {
+/* ukuran tampilan HP */
 
-  text-align:center;
+@media(max-width:768px){
 
-  font-weight:bold;
+    body{
 
-}
+        zoom:0.85;
 
-
-@media(max-width:600px){
-
-body{
-
- transform:scale(0.95);
-
- transform-origin:top left;
-
- width:105%;
-
-}
+    }
 
 
-td,
-th{
+    table{
 
- font-size:9px !important;
+        width:100% !important;
 
- padding:2px !important;
+    }
 
-}
+
+    td,
+    th{
+
+        font-size:10px !important;
+
+        padding:3px !important;
+
+    }
 
 }
 
 
 </style>
 
-`;
+
+</head>`
+    );
+
 }
 
 
 
 export async function GET(
- request:NextRequest
-){
-
-try{
+    request: NextRequest
+) {
 
 
-const {
- searchParams
-}=new URL(request.url);
+try {
 
 
-
-const storeId =
-searchParams.get("storeId");
-
-
-const periode1 =
-searchParams.get("periode1");
-
-
-const periode2 =
-searchParams.get("periode2");
+    const {
+        searchParams
+    } = new URL(request.url);
 
 
 
-if(
- !storeId ||
- !periode1 ||
- !periode2
-){
+    const storeId =
+        searchParams.get("storeId");
 
-return NextResponse.json(
-{
 
-success:false,
+    const periode1 =
+        searchParams.get("periode1");
 
-message:
-"storeId, periode1, periode2 wajib"
 
-},
-{
-status:400
-}
-);
-
-}
+    const periode2 =
+        searchParams.get("periode2");
 
 
 
-const url =
-`${ALFASTORE_URL}`+
-`?storeId=${storeId}`+
-`&periode1=${periode1}`+
-`&periode2=${periode2}`;
+    if(
+        !storeId ||
+        !periode1 ||
+        !periode2
+    ){
+
+        return NextResponse.json(
+            {
+
+                success:false,
+
+                message:
+                "storeId, periode1, periode2 wajib diisi"
+
+            },
+            {
+                status:400
+            }
+        );
+
+    }
 
 
 
-const response =
-await fetch(
-url,
-{
-
-method:"GET",
-
-headers:{
-
-"App-Name":
-"CEXP-CLOUD"
-
-},
-
-cache:"no-store"
-
-}
-);
+    const apiUrl =
+        `${ALFASTORE_URL}` +
+        `?storeId=${encodeURIComponent(storeId)}` +
+        `&periode1=${encodeURIComponent(periode1)}` +
+        `&periode2=${encodeURIComponent(periode2)}`;
 
 
 
-const html =
-await response.text();
+    const response =
+        await fetch(
+            apiUrl,
+            {
+
+                method:"GET",
+
+                headers:{
+
+                    "App-Name":
+                    "CEXP-CLOUD"
+
+                },
+
+                cache:"no-store"
+
+            }
+        );
 
 
 
-if(!response.ok){
-
-return new NextResponse(
-html,
-{
-status:response.status,
-headers:{
-"Content-Type":
-"text/html"
-}
-}
-);
-
-}
+    const html =
+        await response.text();
 
 
 
-const result =
-fixHtml(html);
+    if(!response.ok){
+
+        return new NextResponse(
+            html,
+            {
+
+                status:response.status,
+
+                headers:{
+
+                    "Content-Type":
+                    "text/html"
+
+                }
+
+            }
+        );
+
+    }
 
 
 
-return new NextResponse(
-result,
-{
-
-status:200,
-
-headers:{
-
-"Content-Type":
-"text/html; charset=utf-8",
-
-"Cache-Control":
-"no-store"
-
-}
-
-}
-);
+    const finalHtml =
+        optimizeHtml(html);
 
 
 
-}catch(error){
+    return new NextResponse(
+        finalHtml,
+        {
 
+            status:200,
 
-return NextResponse.json(
-{
+            headers:{
 
-success:false,
+                "Content-Type":
+                "text/html; charset=utf-8",
 
-message:
-"Gagal mengambil laporan NR",
+                "Cache-Control":
+                "no-store"
 
-error:
-error instanceof Error
-?
-error.message
-:
-String(error)
+            }
 
-},
+        }
+    );
 
-{
-status:500
-}
-
-);
 
 
 }
+catch(error){
+
+
+    return NextResponse.json(
+        {
+
+            success:false,
+
+            message:
+            "Gagal mengambil laporan NR",
+
+            error:
+            error instanceof Error
+            ?
+            error.message
+            :
+            String(error)
+
+        },
+        {
+            status:500
+        }
+    );
+
+
+}
+
 
 }

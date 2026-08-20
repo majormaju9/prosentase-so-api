@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 
 
 const ALFASTORE_URL =
-"https://app.alfastore.co.id/prd/api/lpb/tablet/lpb/get_det_faktur/";
+"https://app.alfastore.co.id/prd/api/lpb/tablet/lpb/get_det_faktur";
 
 
 export async function GET(
@@ -19,6 +19,7 @@ new URL(request.url);
 const storeId =
 searchParams.get("storeId");
 
+
 const faktur =
 searchParams.get("faktur");
 
@@ -28,7 +29,7 @@ if(!storeId || !faktur){
 return Response.json(
 {
 success:false,
-message:"storeId dan faktur wajib"
+message:"storeId dan faktur wajib diisi"
 },
 {
 status:400
@@ -38,13 +39,17 @@ status:400
 }
 
 
+// =======================
+// POST KE ALFASTORE LPB
+// =======================
 
-const response =
+const alfaResponse =
 await fetch(
 ALFASTORE_URL,
 {
 
 method:"POST",
+
 
 headers:{
 
@@ -95,37 +100,55 @@ storeId,
 },
 
 
-body:JSON.stringify({
+// BODY JSON YANG DIKIRIM KE ALFASTORE
+
+body:JSON.stringify(
+{
 
 storeId:storeId,
 
 faktur:faktur
 
-}),
+}
+
+),
 
 
 cache:"no-store"
 
 }
+
 );
 
 
 
-const result =
-await response.text();
+// =======================
+// RETURN RESPONSE ASLI
+// =======================
+
+
+const data =
+await alfaResponse.text();
 
 
 
 return new Response(
-result,
+data,
 {
 
-status:response.status,
+status:
+alfaResponse.status,
+
 
 headers:{
 
 "Content-Type":
+alfaResponse.headers.get(
+"content-type"
+)
+||
 "application/json",
+
 
 "Cache-Control":
 "no-store"
@@ -133,6 +156,7 @@ headers:{
 }
 
 }
+
 );
 
 
@@ -147,7 +171,7 @@ return Response.json(
 success:false,
 
 message:
-"Gagal mengambil LPB",
+"Gagal koneksi AlfaStore LPB",
 
 error:
 error instanceof Error

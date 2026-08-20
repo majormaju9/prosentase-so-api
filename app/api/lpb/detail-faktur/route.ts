@@ -5,15 +5,13 @@ const ALFASTORE_URL =
 "https://app.alfastore.co.id/prd/api/lpb/tablet/lpb/get_det_faktur/";
 
 
-export async function POST(request: NextRequest) {
+async function callAlfaStore(
+  storeId:string,
+  faktur:string
+){
 
-try {
-
-
-const body = await request.json();
-
-
-const response = await fetch(
+const response =
+await fetch(
   ALFASTORE_URL,
   {
 
@@ -23,17 +21,20 @@ const response = await fetch(
 
       "App-Name":"LPB-CLOUD",
 
-      "Version-App":"V.2025.11.25.04",
+      "Version-App":
+      "V.2025.11.25.04",
 
-      "Version-Code":"30",
+      "Version-Code":
+      "30",
 
       "User-Agent":
       "Dalvik/2.1.0 (Linux; U; Android 15)",
 
-      "App-Uid":"23067884",
+      "App-Uid":
+      "23067884",
 
       "Store-Id":
-      body.storeId,
+      storeId,
 
       "Api-Key":
       "ivOZX9MLMKrjlL8R23uFlaryMRIvGMXG",
@@ -41,11 +42,13 @@ const response = await fetch(
       "AndroidId":
       "712f8db18eeb1816",
 
-      "Platform":"ANDROID",
-
-      "Accept":"application/json",
+      "Platform":
+      "ANDROID",
 
       "Content-Type":
+      "application/json",
+
+      "Accept":
       "application/json"
 
     },
@@ -53,11 +56,8 @@ const response = await fetch(
 
     body:JSON.stringify({
 
-      storeId:
-      body.storeId,
-
-      faktur:
-      body.faktur
+      storeId,
+      faktur
 
     }),
 
@@ -68,60 +68,98 @@ const response = await fetch(
 );
 
 
+return response;
+
+}
+
+
+
+export async function GET(
+request:NextRequest
+){
+
+const {searchParams}
+=
+new URL(request.url);
+
+
+const storeId =
+searchParams.get("storeId");
+
+const faktur =
+searchParams.get("faktur");
+
+
+if(!storeId || !faktur){
+
+return Response.json(
+{
+message:
+"storeId dan faktur wajib"
+},
+{
+status:400
+}
+);
+
+}
+
+
+const response =
+await callAlfaStore(
+storeId,
+faktur
+);
+
 
 const result =
 await response.text();
 
 
+return new Response(
+result,
+{
+status:response.status,
+headers:{
+"Content-Type":
+"application/json"
+}
+}
+);
+
+
+}
+
+
+
+export async function POST(
+request:NextRequest
+){
+
+const body =
+await request.json();
+
+
+const response =
+await callAlfaStore(
+body.storeId,
+body.faktur
+);
+
+
+const result =
+await response.text();
+
 
 return new Response(
 result,
 {
-
 status:response.status,
-
 headers:{
-
 "Content-Type":
-"application/json",
-
-"Cache-Control":
-"no-store"
-
+"application/json"
 }
-
 }
 );
-
-
-
-}
-catch(error){
-
-
-return Response.json(
-{
-
-success:false,
-
-message:"LPB Error",
-
-error:
-error instanceof Error
-?
-error.message
-:
-String(error)
-
-},
-
-{
-status:500
-}
-
-);
-
-
-}
 
 }

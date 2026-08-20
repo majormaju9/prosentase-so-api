@@ -11,37 +11,31 @@ export async function GET(
 
   try {
 
-
-    const {
-      searchParams
-    } = new URL(request.url);
-
+    const { searchParams } =
+      new URL(request.url);
 
 
     const storeId =
       searchParams.get("storeId");
 
-
     const faktur =
       searchParams.get("faktur");
-
 
 
     if (!storeId || !faktur) {
 
       return NextResponse.json(
         {
-          success:false,
+          success: false,
           message:
-          "storeId dan faktur wajib diisi"
+            "storeId dan faktur wajib diisi"
         },
         {
-          status:400
+          status: 400
         }
       );
 
     }
-
 
 
     const apiUrl =
@@ -52,74 +46,61 @@ export async function GET(
 
 
     const response =
-      await fetch(
-        apiUrl,
-        {
+      await fetch(apiUrl, {
 
-          method:"GET",
+        method: "GET",
 
-          headers:{
+        headers: {
+          "App-Name": "CEXP-CLOUD",
+          "Accept": "application/json"
+        },
 
-            "App-Name":
-            "CEXP-CLOUD"
+        cache: "no-store"
 
-          },
-
-          cache:"no-store"
-
-        }
-      );
+      });
 
 
 
-    const result =
+    const data =
       await response.text();
 
 
 
     return new NextResponse(
-      result,
+      data,
       {
+        status: response.status,
 
-        status:response.status,
-
-        headers:{
-
+        headers: {
           "Content-Type":
-          response.headers.get(
-            "content-type"
-          )
-          ||
-          "application/json",
+            response.headers.get("content-type")
+            ??
+            "application/json",
 
           "Cache-Control":
-          "no-store"
-
+            "no-store"
         }
-
       }
     );
 
 
 
-  } catch(error) {
+  } catch (error) {
 
 
     return NextResponse.json(
       {
-
         success:false,
 
         message:
-        "Gagal mengambil data Total Faktur AlfaStore",
+          "Server error Total Faktur",
 
         error:
-        error instanceof Error
-        ?
-        error.message
-        :
-        String(error)
-
+          error instanceof Error
+          ?
+          error.message
+          :
+          String(error)
       },
       {
         status:500

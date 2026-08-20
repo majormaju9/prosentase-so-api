@@ -1,7 +1,8 @@
 import { NextRequest } from "next/server";
 
+
 const ALFASTORE_URL =
-  "https://app.alfastore.co.id/prd/api/lpb/tablet/lpb/get_det_faktur/";
+  "https://app.alfastore.co.id/prd/api/lpb/tablet/lpb/get_det_faktur";
 
 
 export async function GET(
@@ -56,35 +57,50 @@ export async function GET(
             "30",
 
             "User-Agent":
-            "Dalvik/2.1.0 (Linux; U; Android 15; Infinix X6885)",
+            "Dalvik/2.1.0 (Linux; U; Android 15; Infinix X6885 Build/AP3A.240905.015.A2)",
+
 
             "App-Uid":
             "23067884",
 
+
             "Store-Id":
             storeId,
+
 
             "Api-Key":
             "ivOZX9MLMKrjlL8R23uFlaryMRIvGMXG",
 
+
             "AndroidId":
             "712f8db18eeb1816",
+
 
             "Platform":
             "ANDROID",
 
+
+            "Accept":
+            "application/json",
+
+
             "Content-Type":
             "application/json",
 
-            "Accept":
-            "application/json"
+
+            "Accept-Encoding":
+            "gzip"
 
           },
 
 
-          body:JSON.stringify({
+          body:
+          JSON.stringify({
 
+            storeId:
             storeId,
+
+            faktur:
             faktur
 
           }),
@@ -97,8 +113,10 @@ export async function GET(
       );
 
 
+
     const result =
       await response.text();
+
 
 
     return new Response(
@@ -108,10 +126,16 @@ export async function GET(
         status:
         response.status,
 
+
         headers:{
 
           "Content-Type":
-          "application/json",
+          response.headers.get(
+            "content-type"
+          )
+          ||
+          "application/json; charset=utf-8",
+
 
           "Cache-Control":
           "no-store"
@@ -122,8 +146,9 @@ export async function GET(
     );
 
 
-  }
-  catch(error){
+
+  } catch(error) {
+
 
     return Response.json(
       {
@@ -132,6 +157,7 @@ export async function GET(
 
         message:
         "Gagal mengambil detail faktur LPB",
+
 
         error:
         error instanceof Error

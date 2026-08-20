@@ -1,19 +1,166 @@
-import { NextRequest } from "next/server";
-
+import { NextRequest, NextResponse } from "next/server";
 
 const ALFASTORE_URL =
-"https://app.alfastore.co.id/prd/api/lpb/tablet/lpb/get_det_faktur";
+  "https://app.alfastore.co.id/prd/api/lpb/tablet/lpb/TotalFaktur/";
+
+function cleanHtmlText(value: string): string {
+  return value
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+
+function convertLPBHtml(html: string): string {
+
+  const tableMatch = html.match(
+    /<table[\s\S]*?<\/table>/i
+  );
+
+
+  if (!tableMatch) {
+    throw new Error("Tabel LPB tidak ditemukan");
+  }
+
+
+  const table = tableMatch[0];
+
+
+  const rows: string[] = [];
+
+
+  const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+
+  let rowMatch;
+
+
+  while ((rowMatch = rowRegex.exec(table)) !== null) {
+
+    const rowHtml = rowMatch[1];
+
+
+    const cells:string[]=[];
+
+
+    const tdRegex = /<(td|th)[^>]*>([\s\S]*?)<\/\1>/gi;
+
+
+    let cellMatch;
+
+
+    while((cellMatch = tdRegex.exec(rowHtml)) !== null){
+
+      cells.push(
+        cleanHtmlText(cellMatch[2])
+      );
+
+    }
+
+
+    if(cells.length){
+
+      rows.push(`
+        <tr>
+          ${cells.map(
+            c=>`<td>${escapeHtml(c)}</td>`
+          ).join("")}
+        </tr>
+      `);
+
+    }
+
+  }
+
+
+
+  return `
+<!DOCTYPE html>
+
+<html>
+
+<head>
+
+<meta charset="UTF-8">
+
+<style>
+
+table.datatable{
+width:100%;
+border-collapse:collapse;
+font-size:12px;
+}
+
+.datatable td,
+.datatable th{
+
+border:1px solid black;
+padding:4px;
+
+}
+
+</style>
+
+
+</head>
+
+
+<body>
+
+
+<table class="datatable">
+
+
+<thead>
+
+<tr>
+
+<th>Data</th>
+
+</tr>
+
+</thead>
+
+
+<tbody>
+
+${rows.join("")}
+
+
+</tbody>
+
+
+</table>
+
+
+</body>
+
+</html>
+
+`;
+
+}
+
 
 
 export async function GET(
 request: NextRequest
 ){
 
-try {
+try{
 
 
-const {searchParams} =
-new URL(request.url);
+const {searchParams}=new URL(request.url);
 
 
 const storeId =
@@ -24,32 +171,34 @@ const faktur =
 searchParams.get("faktur");
 
 
+
 if(!storeId || !faktur){
 
-return Response.json(
-{
+return NextResponse.json({
+
 success:false,
-message:"storeId dan faktur wajib diisi"
+
+message:
+"storeId dan faktur wajib diisi"
+
 },
 {
 status:400
-}
-);
+});
 
 }
 
 
-// =======================
-// POST KE ALFASTORE LPB
-// =======================
 
-const alfaResponse =
-await fetch(
-ALFASTORE_URL,
-{
+const apiUrl =
+`${ALFASTORE_URL}?storeId=${encodeURIComponent(storeId)}&faktur=${encodeURIComponent(faktur)}`;
 
-method:"POST",
 
+
+const response =
+await fetch(apiUrl,{
+
+method:"GET",
 
 headers:{
 
@@ -70,7 +219,7 @@ headers:{
 "Dalvik/2.1.0 (Linux; U; Android 15)",
 
 
-"App-Uid":
+"User-Id":
 "23067884",
 
 
@@ -90,74 +239,63 @@ storeId,
 "ANDROID",
 
 
-"Content-Type":
-"application/json",
+"Host":
+"app.alfastore.co.id",
 
 
-"Accept":
-"application/json"
+"Connection":
+"Keep-Alive",
+
+
+"Accept-Encoding":
+"gzip"
 
 },
 
 
-// BODY JSON YANG DIKIRIM KE ALFASTORE
-
-body:JSON.stringify(
-{
-
-storeId:storeId,
-
-faktur:faktur
-
-}
-
-),
-
-
 cache:"no-store"
 
-}
 
-);
-
-
-
-// =======================
-// RETURN RESPONSE ASLI
-// =======================
-
-
-const data =
-await alfaResponse.text();
+});
 
 
 
-return new Response(
-data,
-{
+const html =
+await response.text();
+
+
+
+if(!response.ok){
+
+return NextResponse.json({
+
+success:false,
 
 status:
-alfaResponse.status,
+response.status,
 
+response:html
 
-headers:{
-
-"Content-Type":
-alfaResponse.headers.get(
-"content-type"
-)
-||
-"application/json",
-
-
-"Cache-Control":
-"no-store"
+},
+{
+status:response.status
+});
 
 }
 
-}
 
-);
+
+const converted =
+convertLPBHtml(html);
+
+
+
+return NextResponse.json({
+
+table:
+converted
+
+});
 
 
 
@@ -165,13 +303,19 @@ alfaResponse.headers.get(
 catch(error){
 
 
-return Response.json(
-{
+console.error(
+"LPB ERROR",
+error
+);
+
+
+
+return NextResponse.json({
 
 success:false,
 
 message:
-"Gagal koneksi AlfaStore LPB",
+"Gagal mengambil data LPB",
 
 error:
 error instanceof Error
@@ -183,10 +327,10 @@ String(error)
 },
 {
 status:500
-}
-);
+});
 
 
 }
+
 
 }

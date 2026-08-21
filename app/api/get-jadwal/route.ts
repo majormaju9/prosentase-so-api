@@ -9,14 +9,40 @@ export const revalidate = 0;
 
 export async function GET(request: NextRequest) {
   try {
-
     const { searchParams } = new URL(request.url);
 
     const storeId =
-      searchParams.get("storeId") || "M604";
+      searchParams.get("storeId");
+
+    const beginDate =
+      searchParams.get("beginDate");
+
+    const endDate =
+      searchParams.get("endDate");
 
 
-    const response = await fetch(ALFASTORE_URL, {
+    if (!storeId || !beginDate || !endDate) {
+      return NextResponse.json(
+        {
+          success: false,
+          message:
+            "storeId, beginDate dan endDate wajib diisi",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+
+    const apiUrl =
+      `${ALFASTORE_URL}` +
+      `?storeId=${encodeURIComponent(storeId)}` +
+      `&beginDate=${encodeURIComponent(beginDate)}` +
+      `&endDate=${encodeURIComponent(endDate)}`;
+
+
+    const response = await fetch(apiUrl, {
       method: "GET",
 
       headers: {
@@ -37,10 +63,6 @@ export async function GET(request: NextRequest) {
           process.env.ALFA_BRANCH_ID ||
           "MZ01",
 
-        "Class-Store": "",
-
-        "Company-Ext": "",
-
         "Company-Id": "SAT",
 
         "Ip-Addr": "0.0.0.0",
@@ -54,8 +76,6 @@ export async function GET(request: NextRequest) {
         "Shard-Id": "Sn",
 
         "Store-Id": storeId,
-
-        "Store-Id-Ext": "",
 
         "User-Id":
           process.env.ALFA_USER_ID ||
@@ -73,16 +93,11 @@ export async function GET(request: NextRequest) {
     });
 
 
-    const contentType =
-      response.headers.get("content-type");
-
-
     const text =
       await response.text();
 
 
     if (!response.ok) {
-
       return NextResponse.json(
         {
           success: false,
@@ -94,31 +109,22 @@ export async function GET(request: NextRequest) {
           status: response.status,
         }
       );
-
     }
 
 
-    if (
-      contentType &&
-      contentType.includes("application/json")
-    ) {
+    let data;
 
-      return NextResponse.json(
-        {
-          success: true,
-          data: JSON.parse(text),
-        }
-      );
-
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = text;
     }
 
 
-    return NextResponse.json(
-      {
-        success: true,
-        data: text,
-      }
-    );
+    return NextResponse.json({
+      success: true,
+      data,
+    });
 
 
   } catch (error) {
@@ -140,11 +146,9 @@ export async function GET(request: NextRequest) {
             ? error.message
             : String(error),
       },
-
       {
         status: 500,
       }
     );
-
   }
 }

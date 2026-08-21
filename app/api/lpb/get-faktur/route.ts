@@ -4,7 +4,6 @@ const ALFASTORE_URL =
   "https://app.alfastore.co.id/prd/api/lpb/tablet/lpb/get_faktur/";
 
 export const dynamic = "force-dynamic";
-export const revalidate = 0;
 
 export async function GET(request: NextRequest) {
   try {
@@ -14,32 +13,19 @@ export async function GET(request: NextRequest) {
 
     if (!storeId) {
       return NextResponse.json(
-        {
-          error: true,
-          message: "storeId wajib diisi",
-        },
+        { message: "storeId wajib diisi" },
         { status: 400 }
       );
     }
 
     const url = new URL(ALFASTORE_URL);
-
     url.searchParams.set("storeId", storeId);
-
-
-    const apiKey = process.env.ALFA_API_KEY;
-    const androidId = process.env.ALFA_ANDROID_ID;
-    const userId = process.env.ALFA_USER_ID;
-    const branchId = process.env.ALFA_BRANCH_ID;
-
 
     const response = await fetch(url.toString(), {
       method: "GET",
       cache: "no-store",
 
       headers: {
-        Accept: "*/*",
-
         "App-Name": "LPB-CLOUD",
         "Version-App": "V.2025.11.25.04",
         "Version-Code": "30",
@@ -47,64 +33,63 @@ export async function GET(request: NextRequest) {
         "User-Agent":
           "Dalvik/2.1.0 (Linux; U; Android 15; Infinix X6885 Build/AP3A.240905.015.A2)",
 
-        "User-Id": userId || "",
+        "App-Uid": "",
+
+        "User-Id": "23067884",
 
         "Store-Id": storeId,
 
-        "Api-Key": apiKey || "",
+        "Store-Id-Ext": "",
 
-        AndroidId: androidId || "",
-
-        "Branch-Id": branchId || "",
-
-        Platform: "ANDROID",
-
-        "Mac-Addr": androidId || "",
+        "Shard-Id": "",
 
         "Ip-Addr": "10.1.10.1",
 
-        "App-Uid": "",
-        "Store-Id-Ext": "",
-        "Shard-Id": "",
-        "Class-Store": "",
-        "Company-Id": "",
-        "Company-Ext": "",
         Sn: "",
+
+        "Api-Key": "ivOZX9MLMKrjl8R23uFlaryMRIvGMXG",
+
+        AndroidId: "712f8db18eeb1816",
+
+        "Branch-Id": "MZO1",
+
+        "Class-Store": "",
+
+        "Company-Id": "",
+
+        "Company-Ext": "",
+
+        Platform: "ANDROID",
+
+        "Mac-Addr": "712f8db18eeb1816",
+
+        Connection: "Keep-Alive",
+
+        "Accept-Encoding": "gzip",
       },
     });
 
+    const body = await response.text();
 
-    const result = await response.text();
-
-
-    console.log("============================");
-    console.log("GET FAKTUR URL:", url.toString());
+    console.log("URL:", url.toString());
     console.log("STATUS:", response.status);
-    console.log(result);
-    console.log("============================");
+    console.log("BODY:", body);
 
-
-    return new NextResponse(result, {
+    return new NextResponse(body, {
       status: response.status,
-
       headers: {
         "Content-Type":
           response.headers.get("content-type") ||
-          "application/json; charset=utf-8",
-
-        "Cache-Control": "no-store",
+          "application/json",
       },
     });
 
-
   } catch (error) {
-
-    console.error("GET FAKTUR ERROR:", error);
+    console.error(error);
 
     return NextResponse.json(
       {
-        error: true,
-        message: "Gagal mengambil data faktur",
+        message: "Proxy error",
       },
       {
         status: 500,

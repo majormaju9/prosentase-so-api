@@ -4,8 +4,16 @@ const ALFASTORE_URL =
   "https://app.alfastore.co.id/prd/api/rpt/laporan/laporan_sales_member";
 
 
+function cleanHtml(html: string) {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "");
+}
+
+
 export async function GET(req: NextRequest) {
   try {
+
     const { searchParams } = new URL(req.url);
 
     const storeId =
@@ -47,10 +55,10 @@ export async function GET(req: NextRequest) {
     const response = await fetch(
       apiUrl.toString(),
       {
-        method: "GET",
         headers: {
-          "Accept": "application/json",
-          "Content-Type": "application/json",
+
+          "Accept":
+            "text/html,application/xhtml+xml",
 
           "User-Agent":
             "Dalvik/2.1.0 (Linux; Android 15)",
@@ -83,46 +91,124 @@ export async function GET(req: NextRequest) {
     );
 
 
-    const text = await response.text();
+    const html = await response.text();
 
 
-    let data;
+    const finalHtml = `
+<!DOCTYPE html>
+<html>
+<head>
 
-    try {
-      data = JSON.parse(text);
-    } catch {
-      data = text;
-    }
+<meta charset="UTF-8">
+
+<title>Laporan Sales Member</title>
+
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<style>
+
+body {
+    font-family: Arial, sans-serif;
+    background:#f5f5f5;
+    padding:20px;
+}
+
+.container {
+    background:white;
+    padding:20px;
+    border-radius:10px;
+    overflow:auto;
+}
+
+table {
+    width:100%;
+    border-collapse:collapse;
+    font-size:14px;
+}
+
+table th {
+    background:#0066cc;
+    color:white;
+    padding:10px;
+}
+
+table td {
+    border:1px solid #ddd;
+    padding:8px;
+}
+
+tr:nth-child(even){
+    background:#f9f9f9;
+}
+
+h2 {
+    text-align:center;
+}
+
+</style>
+
+</head>
 
 
-    return NextResponse.json(
+<body>
+
+
+<div class="container">
+
+<h2>
+Laporan Sales Member
+</h2>
+
+
+<div>
+<b>Store :</b> ${storeId}
+<br>
+<b>User :</b> ${userId}
+<br>
+<b>Periode :</b> ${periode1} s/d ${periode2}
+</div>
+
+<hr>
+
+
+${cleanHtml(html)}
+
+
+</div>
+
+
+</body>
+
+</html>
+`;
+
+
+    return new NextResponse(
+      finalHtml,
       {
-        success: response.ok,
-        status: response.status,
-        source:
-          "AlfaStore laporan_sales_member",
-        data
-      },
-      {
-        status: response.status
+        status:200,
+        headers:{
+          "Content-Type":
+          "text/html; charset=utf-8"
+        }
       }
     );
 
 
-  } catch (error: any) {
+  } catch(error:any){
 
-    return NextResponse.json(
-      {
-        success:false,
-        message:
-          "AlfaStore API error",
-        error:
-          error.message
-      },
-      {
-        status:500
-      }
-    );
+    return new NextResponse(
+`
+<h2>Error</h2>
+<p>${error.message}</p>
+`,
+{
+status:500,
+headers:{
+"Content-Type":"text/html"
+}
+}
+);
 
   }
 }

@@ -19,15 +19,19 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const apiUrl =
-      `${ALFASTORE_URL}?storeId=${encodeURIComponent(storeId)}`;
+    const response = await fetch(ALFASTORE_URL, {
+      method: "POST",
 
-    const response = await fetch(apiUrl, {
-      method: "GET",
       headers: {
         "App-Name": "CEXP-CLOUD",
+        "Content-Type": "application/json",
         Accept: "application/json",
       },
+
+      body: JSON.stringify({
+        storeId,
+      }),
+
       cache: "no-store",
     });
 

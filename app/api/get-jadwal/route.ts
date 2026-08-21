@@ -3,22 +3,14 @@ import { NextRequest, NextResponse } from "next/server";
 const ALFASTORE_URL =
   "https://app.alfastore.co.id/prd/api/so/utility/get_jadwal";
 
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
-
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
 
-    const storeId =
-      searchParams.get("storeId");
-
-    const beginDate =
-      searchParams.get("beginDate");
-
-    const endDate =
-      searchParams.get("endDate");
+    const storeId = searchParams.get("storeId");
+    const beginDate = searchParams.get("beginDate");
+    const endDate = searchParams.get("endDate");
 
 
     if (!storeId || !beginDate || !endDate) {
@@ -26,7 +18,7 @@ export async function GET(request: NextRequest) {
         {
           success: false,
           message:
-            "storeId, beginDate dan endDate wajib diisi",
+            "storeId, beginDate, dan endDate wajib diisi",
         },
         {
           status: 400,
@@ -46,55 +38,31 @@ export async function GET(request: NextRequest) {
       method: "GET",
 
       headers: {
-        "Content-Type": "application/json",
         "Accept": "application/json",
-
-        "Api-Key":
-          process.env.ALFA_API_KEY ||
-          "ivOZX9MLmKrj1L8R23uFlaryMR1vGMXG",
+        "Content-Type": "application/json",
 
         "App-Name": "CEXP-CLOUD",
+        "App-Uid": "10365",
 
-        "App-Uid":
-          process.env.ALFA_APP_UID ||
-          "10365",
+        "Api-Key":
+          "ivOZX9MLmKrj1L8R23uFlaryMR1vGMXG",
 
-        "Branch-Id":
-          process.env.ALFA_BRANCH_ID ||
-          "MZ01",
-
-        "Company-Id": "SAT",
-
-        "Ip-Addr": "0.0.0.0",
-
-        "Mac-Addr":
-          process.env.ALFA_MAC_ADDR ||
-          "712f8db18eeb1816",
-
-        "Platform": "ANDROID",
-
-        "Shard-Id": "Sn",
-
+        "Branch-Id": "MZ01",
         "Store-Id": storeId,
 
-        "User-Id":
-          process.env.ALFA_USER_ID ||
-          "23067884",
-
+        "Platform": "ANDROID",
         "Version-App": "2025.05.20.1",
-
         "Version-Code": "9",
 
         "User-Agent":
-          "Dalvik/2.1.0 (Linux; U; Android 15; Infinix X6885 Build/AP3A.240905.015.A2)",
+          "Dalvik/2.1.0 (Linux; Android 15)",
       },
 
       cache: "no-store",
     });
 
 
-    const text =
-      await response.text();
+    const resultText = await response.text();
 
 
     if (!response.ok) {
@@ -103,7 +71,8 @@ export async function GET(request: NextRequest) {
           success: false,
           message: "AlfaStore API error",
           status: response.status,
-          data: text,
+          url: apiUrl,
+          response: resultText,
         },
         {
           status: response.status,
@@ -115,16 +84,24 @@ export async function GET(request: NextRequest) {
     let data;
 
     try {
-      data = JSON.parse(text);
+      data = JSON.parse(resultText);
     } catch {
-      data = text;
+      data = resultText;
     }
 
 
-    return NextResponse.json({
-      success: true,
-      data,
-    });
+    return NextResponse.json(
+      {
+        success: true,
+        storeId,
+        beginDate,
+        endDate,
+        data,
+      },
+      {
+        status: 200,
+      }
+    );
 
 
   } catch (error) {
@@ -140,7 +117,6 @@ export async function GET(request: NextRequest) {
         success: false,
         message:
           "Gagal mengambil jadwal AlfaStore",
-
         error:
           error instanceof Error
             ? error.message

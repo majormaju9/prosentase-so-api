@@ -44,6 +44,12 @@ export async function GET(req: NextRequest) {
       periode2
     );
 
+    // parameter asli Jasper Report
+    apiUrl.searchParams.set(
+      "#toolbar",
+      "0"
+    );
+
 
     const response = await fetch(
       apiUrl.toString(),
@@ -91,16 +97,17 @@ export async function GET(req: NextRequest) {
       ) || "application/pdf";
 
 
-    const file =
+    const buffer =
       await response.arrayBuffer();
 
 
     return new NextResponse(
-      file,
+      buffer,
       {
         status: response.status,
 
         headers: {
+
           "Content-Type":
             contentType,
 
@@ -111,7 +118,7 @@ export async function GET(req: NextRequest) {
     );
 
 
-  } catch(error:any) {
+  } catch (error:any) {
 
     return NextResponse.json(
       {

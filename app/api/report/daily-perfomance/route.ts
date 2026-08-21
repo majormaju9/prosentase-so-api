@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const ALFASTORE_URL =
-  "https://app.alfastore.co.id/prd/api/jasper-rpt/laporan/daily_performance/download_report";
+  "https://app.alfastore.co.id/prd/api/rpt/laporan/daily_report_online";
 
 
 export async function GET(req: NextRequest) {
@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
       searchParams.get("periode1") || "01-08-2026";
 
     const periode2 =
-      searchParams.get("periode2") || "22-08-2026";
+      searchParams.get("periode2") || "04-08-2026";
 
 
     const apiUrl = new URL(ALFASTORE_URL);
@@ -42,12 +42,6 @@ export async function GET(req: NextRequest) {
     apiUrl.searchParams.set(
       "periode2",
       periode2
-    );
-
-    // parameter asli Jasper Report
-    apiUrl.searchParams.set(
-      "#toolbar",
-      "0"
     );
 
 
@@ -94,20 +88,19 @@ export async function GET(req: NextRequest) {
     const contentType =
       response.headers.get(
         "content-type"
-      ) || "application/pdf";
+      ) || "text/html";
 
 
-    const buffer =
+    const data =
       await response.arrayBuffer();
 
 
     return new NextResponse(
-      buffer,
+      data,
       {
         status: response.status,
 
         headers: {
-
           "Content-Type":
             contentType,
 
@@ -118,7 +111,7 @@ export async function GET(req: NextRequest) {
     );
 
 
-  } catch (error:any) {
+  } catch(error:any){
 
     return NextResponse.json(
       {

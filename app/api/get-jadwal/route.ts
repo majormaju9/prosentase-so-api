@@ -20,23 +20,18 @@ export async function GET(request: NextRequest) {
     }
 
     const apiUrl =
-      `${ALFASTORE_URL}` +
-      `?storeId=${encodeURIComponent(storeId)}`;
-
-    console.log("GET JADWAL URL:", apiUrl);
+      `${ALFASTORE_URL}?storeId=${encodeURIComponent(storeId)}`;
 
     const response = await fetch(apiUrl, {
       method: "GET",
-
       headers: {
         "App-Name": "CEXP-CLOUD",
         Accept: "application/json",
       },
-
       cache: "no-store",
     });
 
-    const responseText = await response.text();
+    const text = await response.text();
 
     if (!response.ok) {
       return NextResponse.json(
@@ -44,22 +39,16 @@ export async function GET(request: NextRequest) {
           success: false,
           message: "AlfaStore API error",
           status: response.status,
-          response: responseText,
+          response: text,
         },
-        {
-          status: response.status,
-        }
+        { status: response.status }
       );
     }
 
-    // Coba parse response AlfaStore sebagai JSON
     try {
-      const data = JSON.parse(responseText);
-
-      return NextResponse.json(data);
+      return NextResponse.json(JSON.parse(text));
     } catch {
-      // Jika ternyata response bukan JSON
-      return new NextResponse(responseText, {
+      return new NextResponse(text, {
         status: 200,
         headers: {
           "Content-Type": "text/plain; charset=utf-8",
@@ -67,16 +56,11 @@ export async function GET(request: NextRequest) {
       });
     }
   } catch (error) {
-    console.error("GET JADWAL ERROR:", error);
-
     return NextResponse.json(
       {
         success: false,
         message: "Gagal mengambil jadwal AlfaStore",
-        error:
-          error instanceof Error
-            ? error.message
-            : String(error),
+        error: error instanceof Error ? error.message : String(error),
       },
       { status: 500 }
     );

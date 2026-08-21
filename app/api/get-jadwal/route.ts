@@ -3,57 +3,58 @@ import { NextRequest, NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// WAJIB isi dengan endpoint JADWAL AlfaStore yang benar di Vercel
-// Contoh:
-// ALFA_JADWAL_URL=https://app.alfastore.co.id/prd/api/xxxxx
-const ALFASTORE_URL = process.env.ALFA_JADWAL_URL?.trim() || "";
-
-function getEnv(name: string, fallback = "") {
+function env(name: string, fallback = ""): string {
   return process.env[name]?.trim() || fallback;
 }
 
-function buildAlfaHeaders(storeId: string): Record<string, string> {
+function buildHeaders(storeId: string): Record<string, string> {
   return {
     Accept: "application/json, text/plain, */*",
     "Content-Type": "application/json",
 
-    // Header aplikasi AlfaStore
-    "App-Name": getEnv("ALFA_APP_NAME", "LPB-CLOUD"),
-    "Version-App": getEnv("ALFA_VERSION_APP"),
-    "Version-Code": getEnv("ALFA_VERSION_CODE"),
+    "App-Name": env("ALFA_APP_NAME", "LPB-CLOUD"),
+    "Version-App": env("ALFA_VERSION_APP"),
+    "Version-Code": env("ALFA_VERSION_CODE"),
 
-    "App-Uid": getEnv("ALFA_APP_UID"),
-    "Api-Key": getEnv("ALFA_API_KEY"),
+    "App-Uid": env("ALFA_APP_UID"),
+    "Api-Key": env("ALFA_API_KEY"),
 
-    // User / toko
-    "User-Id": getEnv("ALFA_USER_ID"),
+    "User-Id": env("ALFA_USER_ID"),
+
     "Store-Id": storeId,
-    "Store-Id-Ext": getEnv("ALFA_STORE_ID_EXT"),
+    "Store-Id-Ext": env("ALFA_STORE_ID_EXT"),
 
-    // Device
-    "AndroidId": getEnv(
+    "AndroidId": env(
       "ALFA_ANDROID_ID",
-      getEnv("ALFA_MAC_ADDR")
+      env("ALFA_MAC_ADDR")
     ),
-    "Mac-Addr": getEnv("ALFA_MAC_ADDR"),
-    Sn: getEnv("ALFA_SN"),
-    "Ip-Addr": getEnv("ALFA_IP_ADDR", "10.1.10.1"),
 
-    // Organisasi
-    "Branch-Id": getEnv("ALFA_BRANCH_ID"),
-    "Class-Store": getEnv("ALFA_CLASS_STORE"),
-    "Company-Id": getEnv("ALFA_COMPANY_ID"),
-    "Company-Ext": getEnv("ALFA_COMPANY_EXT"),
-    "Shard-Id": getEnv("ALFA_SHARD_ID"),
+    "Mac-Addr": env("ALFA_MAC_ADDR"),
+    "Sn": env("ALFA_SN"),
 
-    Platform: getEnv("ALFA_PLATFORM", "ANDROID"),
+    "Ip-Addr": env(
+      "ALFA_IP_ADDR",
+      "10.1.10.1"
+    ),
 
-    // Hindari cache
+    "Branch-Id": env("ALFA_BRANCH_ID"),
+    "Class-Store": env("ALFA_CLASS_STORE"),
+
+    "Company-Id": env("ALFA_COMPANY_ID"),
+    "Company-Ext": env("ALFA_COMPANY_EXT"),
+
+    "Shard-Id": env("ALFA_SHARD_ID"),
+
+    Platform: env(
+      "ALFA_PLATFORM",
+      "ANDROID"
+    ),
+
     "Cache-Control": "no-cache",
   };
 }
 
-async function safeReadResponse(response: Response) {
+async function readResponse(response: Response) {
   const text = await response.text();
 
   if (!text) {
@@ -67,37 +68,60 @@ async function safeReadResponse(response: Response) {
   }
 }
 
-export async function POST(request: NextRequest) {
+async function handleRequest(request: NextRequest) {
   try {
-    // Bisa:
-    // POST /api/get-jadwal?storeId=M604
+    /*
+     * Bisa dipanggil:
+     *
+     * GET
+     * /api/get-jadwal?storeId=M604
+     *
+     * atau:
+     *
+     * POST
+     * /api/get-jadwal?storeId=M604
+     */
+
     const queryStoreId =
-      request.nextUrl.searchParams.get("storeId")?.trim();
+      request.nextUrl.searchParams
+        .get("storeId")
+        ?.trim() || "";
 
-    // Atau:
-    // POST /api/get-jadwal
-    // { "storeId": "M604" }
-    let body: Record<string, unknown> = {};
+    let requestBody: Record<string, unknown> = {};
 
-    try {
-      const rawBody = await request.text();
+    /*
+     * Hanya baca body kalau request dari client adalah POST.
+     * GET browser biasanya tidak mempunyai body.
+     */
+    if (request.method === "POST") {
+      try {
+        const text = await request.text();
 
-      if (rawBody.trim()) {
-        body = JSON.parse(rawBody);
+        if (text.trim()) {
+          const parsed = JSON.parse(text);
+
+          if (
+            parsed &&
+            typeof parsed === "object" &&
+            !Array.isArray(parsed)
+          ) {
+            requestBody = parsed;
+          }
+        }
+      } catch {
+        requestBody = {};
       }
-    } catch {
-      body = {};
     }
 
     const bodyStoreId =
-      typeof body.storeId === "string"
-        ? body.storeId.trim()
+      typeof requestBody.storeId === "string"
+        ? requestBody.storeId.trim()
         : "";
 
     const storeId =
       queryStoreId ||
       bodyStoreId ||
-      getEnv("ALFA_STORE_ID");
+      env("ALFA_STORE_ID");
 
     if (!storeId) {
       return NextResponse.json(
@@ -113,13 +137,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Jangan lanjut kalau URL upstream belum diisi
-    if (!ALFASTORE_URL) {
+    /*
+     * Endpoint AlfaStore asli.
+     *
+     * Jangan isi /api/get-jadwal di sini.
+     * Ini harus URL endpoint AlfaStore yang memang menerima POST.
+     */
+    const alfaUrl = env("ALFA_JADWAL_URL");
+
+    if (!alfaUrl) {
       return NextResponse.json(
         {
           success: false,
           message:
-            "ALFA_JADWAL_URL belum diatur di Environment Variables Vercel",
+            "Environment variable ALFA_JADWAL_URL belum diisi",
         },
         {
           status: 500,
@@ -127,7 +158,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Cek env penting
+    /*
+     * Environment variable yang benar-benar penting.
+     */
     const requiredEnv = [
       "ALFA_API_KEY",
       "ALFA_APP_UID",
@@ -135,7 +168,7 @@ export async function POST(request: NextRequest) {
     ];
 
     const missingEnv = requiredEnv.filter(
-      (name) => !process.env[name]?.trim()
+      (name) => !env(name)
     );
 
     if (missingEnv.length > 0) {
@@ -153,65 +186,74 @@ export async function POST(request: NextRequest) {
     }
 
     /*
-     * Body yang dikirim ke AlfaStore.
+     * Payload menuju AlfaStore.
      *
-     * Semua data tambahan yang dikirim client akan diteruskan,
-     * tetapi storeId dipastikan menggunakan store yang sudah
-     * ditentukan di atas.
+     * Walaupun route kita dipanggil pakai GET dari browser,
+     * request dari Vercel -> AlfaStore tetap POST.
      */
     const alfaBody = {
-      ...body,
+      ...requestBody,
       storeId,
     };
 
-    console.log("[GET-JADWAL] Request AlfaStore", {
-      url: ALFASTORE_URL,
+    console.log("[GET-JADWAL] upstream request", {
+      url: alfaUrl,
       method: "POST",
       storeId,
     });
 
-    const alfaResponse = await fetch(ALFASTORE_URL, {
+    const response = await fetch(alfaUrl, {
       method: "POST",
-      headers: buildAlfaHeaders(storeId),
+      headers: buildHeaders(storeId),
       body: JSON.stringify(alfaBody),
       cache: "no-store",
       redirect: "follow",
     });
 
-    const alfaData =
-      await safeReadResponse(alfaResponse);
+    const data = await readResponse(response);
 
-    console.log("[GET-JADWAL] Response AlfaStore", {
-      status: alfaResponse.status,
-      ok: alfaResponse.ok,
+    console.log("[GET-JADWAL] upstream response", {
+      status: response.status,
+      statusText: response.statusText,
+      contentType:
+        response.headers.get("content-type"),
     });
 
-    if (!alfaResponse.ok) {
+    if (!response.ok) {
       return NextResponse.json(
         {
           success: false,
           message: "AlfaStore API error",
-          status: alfaResponse.status,
-          response: alfaData,
+          status: response.status,
+          statusText: response.statusText,
+          upstreamUrl: alfaUrl,
+          response: data,
         },
         {
-          status: alfaResponse.status,
+          status: response.status,
         }
       );
     }
 
+    /*
+     * Kalau AlfaStore sudah mengembalikan JSON,
+     * kembalikan hasilnya.
+     */
     return NextResponse.json(
       {
         success: true,
         storeId,
-        data: alfaData,
+        data,
       },
       {
         status: 200,
       }
     );
   } catch (error) {
-    console.error("[GET-JADWAL] Internal error:", error);
+    console.error(
+      "[GET-JADWAL] server error",
+      error
+    );
 
     return NextResponse.json(
       {
@@ -229,22 +271,25 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// Kalau dibuka langsung dari browser menggunakan GET,
-// kasih informasi supaya tidak membingungkan.
-export async function GET() {
-  return NextResponse.json(
-    {
-      success: false,
-      message:
-        "Endpoint ini menggunakan POST, bukan GET",
-      contoh:
-        "POST /api/get-jadwal?storeId=M604",
-    },
-    {
-      status: 405,
-      headers: {
-        Allow: "POST",
-      },
-    }
-  );
+/*
+ * Bisa dibuka langsung dari browser.
+ *
+ * Browser:
+ * GET /api/get-jadwal?storeId=M604
+ *
+ * Tetapi AlfaStore tetap dipanggil menggunakan POST.
+ */
+export async function GET(
+  request: NextRequest
+) {
+  return handleRequest(request);
+}
+
+/*
+ * Tetap menerima POST juga.
+ */
+export async function POST(
+  request: NextRequest
+) {
+  return handleRequest(request);
 }

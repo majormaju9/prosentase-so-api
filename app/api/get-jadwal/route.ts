@@ -4,127 +4,136 @@ const ALFASTORE_URL =
   "https://app.alfastore.co.id/prd/api/so/utility/get_jadwal";
 
 
-export async function GET(request: NextRequest) {
+export async function GET(req: NextRequest) {
+
   try {
-    const { searchParams } = new URL(request.url);
 
-    const storeId = searchParams.get("storeId");
-    const beginDate = searchParams.get("beginDate");
-    const endDate = searchParams.get("endDate");
+    const { searchParams } = new URL(req.url);
+
+    const storeId =
+      searchParams.get("storeId") || "M604";
+
+    const beginDate =
+      searchParams.get("beginDate");
+
+    const endDate =
+      searchParams.get("endDate");
 
 
-    if (!storeId || !beginDate || !endDate) {
+    if (!beginDate || !endDate) {
       return NextResponse.json(
         {
-          success: false,
-          message:
-            "storeId, beginDate, dan endDate wajib diisi",
+          success:false,
+          message:"beginDate dan endDate wajib"
         },
         {
-          status: 400,
+          status:400
         }
       );
     }
 
 
-    const apiUrl =
+    const url =
       `${ALFASTORE_URL}` +
-      `?storeId=${encodeURIComponent(storeId)}` +
-      `&beginDate=${encodeURIComponent(beginDate)}` +
-      `&endDate=${encodeURIComponent(endDate)}`;
+      `?storeId=${storeId}` +
+      `&beginDate=${beginDate}` +
+      `&endDate=${endDate}`;
 
 
-    const response = await fetch(apiUrl, {
-      method: "GET",
+    const response = await fetch(url, {
+
+      method:"GET",
 
       headers: {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
 
-        "App-Name": "CEXP-CLOUD",
-        "App-Uid": "10365",
+        "Content-Type":
+          "application/json",
+
+        "Accept":
+          "application/json",
+
+        "App-Name":
+          "PDA",
 
         "Api-Key":
-          "ivOZX9MLmKrj1L8R23uFlaryMR1vGMXG",
+          "ivOZX9MLmKrj1L8R23uF1aryMR1vGMXG",
 
-        "Branch-Id": "MZ01",
-        "Store-Id": storeId,
+        "Version-App":
+          "2024.11.12.09",
 
-        "Platform": "ANDROID",
-        "Version-App": "2025.05.20.1",
-        "Version-Code": "9",
+        "Store-Id":
+          storeId,
+
+        "Mac-Addr":
+          "712f8db18eeb1816",
+
+        "AndroidId":
+          "712f8db18eeb1816",
 
         "User-Agent":
-          "Dalvik/2.1.0 (Linux; Android 15)",
+          "Dalvik/2.1.0 (Linux; U; Android 15; Infinix X6885 Build/AP3A.240905.015.A2)"
+
       },
 
-      cache: "no-store",
+      cache:"no-store"
+
     });
 
 
-    const resultText = await response.text();
+    const text =
+      await response.text();
 
 
-    if (!response.ok) {
+    if(!response.ok){
+
       return NextResponse.json(
         {
-          success: false,
-          message: "AlfaStore API error",
-          status: response.status,
-          url: apiUrl,
-          response: resultText,
+          success:false,
+          status:response.status,
+          response:text
         },
         {
-          status: response.status,
+          status:response.status
         }
       );
+
     }
 
 
     let data;
 
-    try {
-      data = JSON.parse(resultText);
-    } catch {
-      data = resultText;
+    try{
+      data=JSON.parse(text);
+    }
+    catch{
+      data=text;
     }
 
 
-    return NextResponse.json(
-      {
-        success: true,
-        storeId,
-        beginDate,
-        endDate,
-        data,
-      },
-      {
-        status: 200,
-      }
-    );
+    return NextResponse.json({
+
+      success:true,
+      data
+
+    });
 
 
-  } catch (error) {
-
-    console.error(
-      "GET JADWAL ERROR:",
-      error
-    );
-
+  }
+  catch(error){
 
     return NextResponse.json(
       {
-        success: false,
-        message:
-          "Gagal mengambil jadwal AlfaStore",
+        success:false,
         error:
           error instanceof Error
-            ? error.message
-            : String(error),
+          ? error.message
+          : String(error)
       },
       {
-        status: 500,
+        status:500
       }
     );
+
   }
+
 }

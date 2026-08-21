@@ -11,6 +11,7 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
 
     const storeId = searchParams.get("storeId");
+    const filter = searchParams.get("filter") ?? "";
 
     if (!storeId) {
       return NextResponse.json(
@@ -18,13 +19,16 @@ export async function GET(request: NextRequest) {
           error: true,
           message: "storeId wajib diisi",
         },
-        { status: 400 }
+        {
+          status: 400,
+        }
       );
     }
 
     const upstreamUrl = new URL(ALFASTORE_URL);
 
     upstreamUrl.searchParams.set("storeId", storeId);
+    upstreamUrl.searchParams.set("filter", filter);
 
 
     const apiKey = process.env.ALFA_API_KEY || "";
@@ -70,7 +74,6 @@ export async function GET(request: NextRequest) {
         "Class-Store": "",
 
         "Company-Id": "",
-
         "Company-Ext": "",
 
         Platform: "ANDROID",

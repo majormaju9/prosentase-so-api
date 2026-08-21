@@ -20,19 +20,23 @@ export async function GET(request: NextRequest) {
     }
 
     const apiUrl =
-      `${ALFASTORE_URL}?storeId=${encodeURIComponent(storeId)}`;
+      `${ALFASTORE_URL}` +
+      `?storeId=${encodeURIComponent(storeId)}`;
+
+    console.log("GET JADWAL URL:", apiUrl);
 
     const response = await fetch(apiUrl, {
       method: "GET",
+
       headers: {
         "App-Name": "CEXP-CLOUD",
-        "User-Agent": "Mozilla/5.0",
-        Accept: "application/json, text/plain, */*",
+        Accept: "application/json",
       },
+
       cache: "no-store",
     });
 
-    const result = await response.text();
+    const responseText = await response.text();
 
     if (!response.ok) {
       return NextResponse.json(
@@ -40,31 +44,25 @@ export async function GET(request: NextRequest) {
           success: false,
           message: "AlfaStore API error",
           status: response.status,
-          data: result,
+          response: responseText,
         },
-        { status: response.status }
+        {
+          status: response.status,
+        }
       );
     }
 
-    // Kalau response AlfaStore berupa JSON,
-    // kembalikan sebagai JSON asli.
+    // Coba parse response AlfaStore sebagai JSON
     try {
-      const json = JSON.parse(result);
+      const data = JSON.parse(responseText);
 
-      return NextResponse.json(json, {
-        headers: {
-          "Cache-Control": "no-store",
-        },
-      });
+      return NextResponse.json(data);
     } catch {
-      // Kalau ternyata bukan JSON
-      return new Response(result, {
+      // Jika ternyata response bukan JSON
+      return new NextResponse(responseText, {
         status: 200,
         headers: {
-          "Content-Type":
-            response.headers.get("content-type") ||
-            "text/plain; charset=utf-8",
-          "Cache-Control": "no-store",
+          "Content-Type": "text/plain; charset=utf-8",
         },
       });
     }

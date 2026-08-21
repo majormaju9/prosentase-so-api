@@ -4,6 +4,7 @@ const ALFASTORE_URL =
   "https://app.alfastore.co.id/prd/api/lpb/tablet/lpb/get_faktur/";
 
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export async function GET(request: NextRequest) {
   try {
@@ -13,19 +14,32 @@ export async function GET(request: NextRequest) {
 
     if (!storeId) {
       return NextResponse.json(
-        { message: "storeId wajib diisi" },
+        {
+          error: true,
+          message: "storeId wajib diisi",
+        },
         { status: 400 }
       );
     }
 
-    const url = new URL(ALFASTORE_URL);
-    url.searchParams.set("storeId", storeId);
+    const upstreamUrl = new URL(ALFASTORE_URL);
 
-    const response = await fetch(url.toString(), {
+    upstreamUrl.searchParams.set("storeId", storeId);
+
+
+    const apiKey = process.env.ALFA_API_KEY || "";
+    const androidId = process.env.ALFA_ANDROID_ID || "";
+    const userId = process.env.ALFA_USER_ID || "";
+    const branchId = process.env.ALFA_BRANCH_ID || "";
+
+
+    const response = await fetch(upstreamUrl.toString(), {
       method: "GET",
       cache: "no-store",
 
       headers: {
+        Accept: "*/*",
+
         "App-Name": "LPB-CLOUD",
         "Version-App": "V.2025.11.25.04",
         "Version-Code": "30",
@@ -35,7 +49,7 @@ export async function GET(request: NextRequest) {
 
         "App-Uid": "",
 
-        "User-Id": "23067884",
+        "User-Id": userId,
 
         "Store-Id": storeId,
 
@@ -47,11 +61,11 @@ export async function GET(request: NextRequest) {
 
         Sn: "",
 
-        "Api-Key": "ivOZX9MLMKrjl8R23uFlaryMRIvGMXG",
+        "Api-Key": apiKey,
 
-        AndroidId: "712f8db18eeb1816",
+        AndroidId: androidId,
 
-        "Branch-Id": "MZO1",
+        "Branch-Id": branchId,
 
         "Class-Store": "",
 
@@ -61,35 +75,42 @@ export async function GET(request: NextRequest) {
 
         Platform: "ANDROID",
 
-        "Mac-Addr": "712f8db18eeb1816",
-
-        Connection: "Keep-Alive",
-
-        "Accept-Encoding": "gzip",
+        "Mac-Addr": androidId,
       },
     });
+
 
     const body = await response.text();
 
-    console.log("URL:", url.toString());
+
+    console.log("==============================");
+    console.log("GET FAKTUR URL:", upstreamUrl.toString());
     console.log("STATUS:", response.status);
     console.log("BODY:", body);
+    console.log("==============================");
+
 
     return new NextResponse(body, {
       status: response.status,
+
       headers: {
         "Content-Type":
           response.headers.get("content-type") ||
-          "application/json",
+          "application/json; charset=utf-8",
+
+        "Cache-Control":
+          "no-store, no-cache, must-revalidate",
       },
     });
 
+
   } catch (error) {
-    console.error(error);
+    console.error("GET FAKTUR ERROR:", error);
 
     return NextResponse.json(
       {
-        message: "Proxy error",
+        error: true,
+        message: "Gagal mengambil data faktur AlfaStore",
       },
       {
         status: 500,

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const ALFASTORE_URL =
-  "https://app.alfastore.co.id/prd/api/lpb/tablet/lpb/get_faktur/";
+  "https://app.alfastore.co.id/prd/api/lpb/tablet/lpb/get_det_faktur/";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -10,30 +10,94 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
 
-    const storeId = searchParams.get("storeId") || "L257";
-    const filter = searchParams.get("filter") || "";
+    const storeId = searchParams.get("storeId");
+    const faktur = searchParams.get("faktur");
+
+    if (!storeId || !faktur) {
+      return NextResponse.json(
+        {
+          error: true,
+          message: "storeId dan faktur wajib diisi",
+        },
+        { status: 400 }
+      );
+    }
 
     const upstreamUrl = new URL(ALFASTORE_URL);
 
     upstreamUrl.searchParams.set("storeId", storeId);
-    upstreamUrl.searchParams.set("filter", filter);
+    upstreamUrl.searchParams.set("faktur", faktur);
+
+    const apiKey = process.env.ALFA_API_KEY;
+    const androidId = process.env.ALFA_ANDROID_ID;
+    const userId = process.env.ALFA_USER_ID;
+    const branchId = process.env.ALFA_BRANCH_ID;
+
+    if (!apiKey || !androidId || !userId || !branchId) {
+      return NextResponse.json(
+        {
+          error: true,
+          message: "Konfigurasi AlfaStore belum lengkap",
+        },
+        { status: 500 }
+      );
+    }
 
     const response = await fetch(upstreamUrl.toString(), {
       method: "GET",
       cache: "no-store",
+
       headers: {
-        Accept: "application/json, text/plain, */*",
+        Accept: "*/*",
+
+        "App-Name": "LPB-CLOUD",
+        "Version-App": "V.2025.11.25.04",
+        "Version-Code": "30",
+
         "User-Agent":
-          request.headers.get("user-agent") ||
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+          "Dalvik/2.1.0 (Linux; U; Android 15; Infinix X6885 Build/AP3A.240905.015.A2)",
+
+        "App-Uid": "",
+
+        "User-Id": userId,
+
+        "Store-Id": storeId,
+        "Store-Id-Ext": "",
+
+        "Shard-Id": "",
+
+        "Ip-Addr": "10.1.10.1",
+
+        Sn: "",
+
+        "Api-Key": apiKey,
+
+        AndroidId: androidId,
+
+        "Branch-Id": branchId,
+
+        "Class-Store": "",
+
+        "Company-Id": "",
+        "Company-Ext": "",
+
+        Platform: "ANDROID",
+
+        "Mac-Addr": androidId,
       },
     });
 
-    // Ambil RAW response agar tampilannya sama dengan API AlfaStore asli
     const body = await response.text();
+
+    console.log("==============================");
+    console.log("DET FAKTUR URL:", upstreamUrl.toString());
+    console.log("STATUS:", response.status);
+    console.log("BODY:", body);
+    console.log("==============================");
 
     return new NextResponse(body, {
       status: response.status,
+
       headers: {
         "Content-Type":
           response.headers.get("content-type") ||
@@ -42,17 +106,16 @@ export async function GET(request: NextRequest) {
         "Cache-Control": "no-store, no-cache, must-revalidate",
       },
     });
+
   } catch (error) {
-    console.error("GET FAKTUR ERROR:", error);
+    console.error("GET DET FAKTUR ERROR:", error);
 
     return NextResponse.json(
       {
         error: true,
-        message: "Gagal mengambil data faktur dari AlfaStore",
+        message: "Gagal mengambil detail faktur AlfaStore",
       },
-      {
-        status: 500,
-      }
+      { status: 500 }
     );
   }
 }

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const ALFASTORE_URL =
-  "https://app.alfastore.co.id/prd/api/lpb/tablet/lpb/get_det_faktur/";
+  "https://app.alfastore.co.id/prd/api/lpb/tablet/lpb/get_faktur/";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -11,39 +11,29 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
 
     const storeId = searchParams.get("storeId");
-    const faktur = searchParams.get("faktur");
 
-    if (!storeId || !faktur) {
+    if (!storeId) {
       return NextResponse.json(
         {
           error: true,
-          message: "storeId dan faktur wajib diisi",
+          message: "storeId wajib diisi",
         },
         { status: 400 }
       );
     }
 
-    const upstreamUrl = new URL(ALFASTORE_URL);
+    const url = new URL(ALFASTORE_URL);
 
-    upstreamUrl.searchParams.set("storeId", storeId);
-    upstreamUrl.searchParams.set("faktur", faktur);
+    url.searchParams.set("storeId", storeId);
+
 
     const apiKey = process.env.ALFA_API_KEY;
     const androidId = process.env.ALFA_ANDROID_ID;
     const userId = process.env.ALFA_USER_ID;
     const branchId = process.env.ALFA_BRANCH_ID;
 
-    if (!apiKey || !androidId || !userId || !branchId) {
-      return NextResponse.json(
-        {
-          error: true,
-          message: "Konfigurasi AlfaStore belum lengkap",
-        },
-        { status: 500 }
-      );
-    }
 
-    const response = await fetch(upstreamUrl.toString(), {
+    const response = await fetch(url.toString(), {
       method: "GET",
       cache: "no-store",
 
@@ -57,45 +47,44 @@ export async function GET(request: NextRequest) {
         "User-Agent":
           "Dalvik/2.1.0 (Linux; U; Android 15; Infinix X6885 Build/AP3A.240905.015.A2)",
 
-        "App-Uid": "",
-
-        "User-Id": userId,
+        "User-Id": userId || "",
 
         "Store-Id": storeId,
-        "Store-Id-Ext": "",
 
-        "Shard-Id": "",
+        "Api-Key": apiKey || "",
 
-        "Ip-Addr": "10.1.10.1",
+        AndroidId: androidId || "",
 
-        Sn: "",
-
-        "Api-Key": apiKey,
-
-        AndroidId: androidId,
-
-        "Branch-Id": branchId,
-
-        "Class-Store": "",
-
-        "Company-Id": "",
-        "Company-Ext": "",
+        "Branch-Id": branchId || "",
 
         Platform: "ANDROID",
 
-        "Mac-Addr": androidId,
+        "Mac-Addr": androidId || "",
+
+        "Ip-Addr": "10.1.10.1",
+
+        "App-Uid": "",
+        "Store-Id-Ext": "",
+        "Shard-Id": "",
+        "Class-Store": "",
+        "Company-Id": "",
+        "Company-Ext": "",
+        Sn: "",
       },
     });
 
-    const body = await response.text();
 
-    console.log("==============================");
-    console.log("DET FAKTUR URL:", upstreamUrl.toString());
+    const result = await response.text();
+
+
+    console.log("============================");
+    console.log("GET FAKTUR URL:", url.toString());
     console.log("STATUS:", response.status);
-    console.log("BODY:", body);
-    console.log("==============================");
+    console.log(result);
+    console.log("============================");
 
-    return new NextResponse(body, {
+
+    return new NextResponse(result, {
       status: response.status,
 
       headers: {
@@ -103,19 +92,23 @@ export async function GET(request: NextRequest) {
           response.headers.get("content-type") ||
           "application/json; charset=utf-8",
 
-        "Cache-Control": "no-store, no-cache, must-revalidate",
+        "Cache-Control": "no-store",
       },
     });
 
+
   } catch (error) {
-    console.error("GET DET FAKTUR ERROR:", error);
+
+    console.error("GET FAKTUR ERROR:", error);
 
     return NextResponse.json(
       {
         error: true,
-        message: "Gagal mengambil detail faktur AlfaStore",
+        message: "Gagal mengambil data faktur",
       },
-      { status: 500 }
+      {
+        status: 500,
+      }
     );
   }
 }

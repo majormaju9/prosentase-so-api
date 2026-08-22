@@ -5,6 +5,7 @@ const ALFASTORE_URL =
 
 
 export async function GET(req: NextRequest) {
+
   try {
 
     const { searchParams } = new URL(req.url);
@@ -59,36 +60,39 @@ export async function GET(req: NextRequest) {
     });
 
 
-    const contentType =
-      response.headers.get("content-type") || "";
+    const html = await response.text();
 
 
-    const data =
-      contentType.includes("json")
-        ? await response.json()
-        : await response.text();
+    return new NextResponse(html, {
 
+      status: response.status,
 
-    return NextResponse.json(
-      data,
-      {
-        status: response.status
+      headers: {
+
+        "Content-Type":
+          "text/html; charset=utf-8"
+
       }
-    );
+
+    });
 
 
-  } catch (error:any) {
+  } catch(error:any){
 
-    return NextResponse.json(
-      {
-        success:false,
-        message:"AlfaStore API error",
-        error:error.message
-      },
-      {
-        status:500
-      }
-    );
+    return NextResponse.json({
+
+      success:false,
+
+      message:"AlfaStore API error",
+
+      error:error.message
+
+    },{
+
+      status:500
+
+    });
 
   }
+
 }

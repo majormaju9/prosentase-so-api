@@ -1,126 +1,60 @@
-import { NextRequest, NextResponse } from "next/server";
+// src/routes/router.ts
 
-const ALFASTORE_URL =
-  "https://app.alfastore.co.id/prd/api/jasper-rpt/laporan/daily_performance/download_report";
+import { Router, Request, Response } from "express";
 
+const router = Router();
 
-export async function GET(req: NextRequest) {
+const ALFASTORE_BASE_URL =
+  "https://app.alfastore.co.id/prd/api/rpt/laporan";
 
+router.get("/daily_performance", async (req: Request, res: Response) => {
   try {
+    const { storeId, periode1, periode2 } = req.query;
 
-    const { searchParams } = new URL(req.url);
+    if (!storeId || !periode1 || !periode2) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Parameter storeId, periode1, dan periode2 wajib diisi",
+      });
+    }
 
-    const storeId =
-      searchParams.get("storeId") || "M604";
+    const params = new URLSearchParams({
+      storeId: String(storeId),
+      periode1: String(periode1),
+      periode2: String(periode2),
+    });
 
-    const userId =
-      searchParams.get("userId") || "23067884";
+    const originalUrl =
+      `${ALFASTORE_BASE_URL}/daily_performance?${params.toString()}`;
 
-    const periode1 =
-      searchParams.get("periode1") || "01-08-2026";
-
-    const periode2 =
-      searchParams.get("periode2") || "22-08-2026";
-
-
-    const url = new URL(ALFASTORE_URL);
-
-
-    url.searchParams.set(
-      "storeId",
-      storeId
-    );
-
-    url.searchParams.set(
-      "userId",
-      userId
-    );
-
-    url.searchParams.set(
-      "periode1",
-      periode1
-    );
-
-    url.searchParams.set(
-      "periode2",
-      periode2
-    );
-
-
-    const response = await fetch(
-      url.toString(),
-      {
-        method:"GET",
-
-        headers:{
-
-          "Accept":
-            "application/pdf",
-
-          "User-Agent":
-            "Dalvik/2.1.0 (Linux; Android 15)",
-
-          "Api-Key":
-            process.env.ALFA_API_KEY || "",
-
-          "App-Name":
-            "CEXP-CLOUD",
-
-          "App-Uid":
-            "10365",
-
-          "Store-Id":
-            storeId,
-
-          "User-Id":
-            userId,
-
-          "Platform":
-            "ANDROID",
-
-          "Version-App":
-            "2025.05.20.1",
-
-          "Version-Code":
-            "9"
-        }
-      }
-    );
-
-
-    const pdf =
-      await response.arrayBuffer();
-
-
-    return new NextResponse(
-      pdf,
-      {
-        status: response.status,
-
-        headers:{
-
-          "Content-Type":
-            "application/pdf",
-
-          "Content-Disposition":
-            "inline; filename=daily_performance.pdf"
-        }
-      }
-    );
-
-
-  } catch(error:any){
-
-    return NextResponse.json(
-      {
-        success:false,
-        error:error.message
+    const response = await fetch(originalUrl, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "Mozilla/5.0",
       },
-      {
-        status:500
-      }
-    );
+    });
 
+    const contentType = response.headers.get("content-type") || "";
+
+    let data: any;
+
+    if (contentType.includes("application/json")) {
+      data = await response.json();
+    } else {
+      data = await response.text();
+    }
+
+    return res.status(response.status).send(data);
+  } catch (error) {
+    console.error("Daily Performance Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Gagal mengambil Daily Performance",
+    });
   }
+});
 
-}
+export default router;

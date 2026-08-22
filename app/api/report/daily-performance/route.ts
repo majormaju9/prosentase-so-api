@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const ALFASTORE_URL =
-  "https://app.alfastore.co.id/prd/api/jasper-rpt/laporan/daily_performance/download_report";
+  "https://app.alfastore.co.id/prd/api/jasper-rpt/laporan/daily_performance";
 
 export const dynamic = "force-dynamic";
 
@@ -25,18 +25,17 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const apiUrl =
-      `${ALFASTORE_URL}` +
-      `?storeId=${encodeURIComponent(storeId)}` +
-      `&userId=${encodeURIComponent(userId)}` +
-      `&periode1=${encodeURIComponent(periode1)}` +
-      `&periode2=${encodeURIComponent(periode2)}` +
-      `&%23toolbar=0`;
+    const upstream = new URL(ALFASTORE_URL);
 
-    const response = await fetch(apiUrl, {
+    upstream.searchParams.set("storeId", storeId);
+    upstream.searchParams.set("userId", userId);
+    upstream.searchParams.set("periode1", periode1);
+    upstream.searchParams.set("periode2", periode2);
+
+    const response = await fetch(upstream.toString(), {
       method: "GET",
       headers: {
-        Accept: "application/pdf,*/*",
+        Accept: "application/json, text/html, */*",
 
         "user-id": userId,
         "store-id": storeId,
@@ -56,36 +55,17 @@ export async function GET(request: NextRequest) {
       redirect: "follow",
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
+    const contentType =
+      response.headers.get("content-type") ||
+      "application/octet-stream";
 
-      return NextResponse.json(
-        {
-          success: false,
-          status: response.status,
-          message: "AlfaStore gagal mengirim laporan",
-          response: errorText,
-        },
-        {
-          status: response.status,
-        }
-      );
-    }
+    const body = await response.arrayBuffer();
 
-    const pdf = await response.arrayBuffer();
-
-    return new NextResponse(pdf, {
-      status: 200,
+    return new NextResponse(body, {
+      status: response.status,
       headers: {
-        "Content-Type": "application/pdf",
-
-        // INI YANG MEMBUAT PDF TAMPIL,
-        // BUKAN LANGSUNG DOWNLOAD
-        "Content-Disposition":
-          'inline; filename="daily-performance.pdf"',
-
-        "Cache-Control":
-          "no-store, no-cache, must-revalidate",
+        "Content-Type": contentType,
+        "Cache-Control": "no-store",
       },
     });
   } catch (error) {
@@ -98,9 +78,7 @@ export async function GET(request: NextRequest) {
             ? error.message
             : String(error),
       },
-      {
-        status: 500,
-      }
+      { status: 500 }
     );
   }
 }

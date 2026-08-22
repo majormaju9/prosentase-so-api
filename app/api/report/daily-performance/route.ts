@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const ALFASTORE_URL =
-  "https://app.alfastore.co.id/prd/api/jasper-rpt/laporan/daily_performance";
+  "https://app.alfastore.co.id/prd/api/rpt/laporan/daily_report_online";
 
 export const dynamic = "force-dynamic";
 
@@ -35,19 +35,29 @@ export async function GET(request: NextRequest) {
     const response = await fetch(upstream.toString(), {
       method: "GET",
       headers: {
-        Accept: "application/json, text/html, */*",
+        Accept: "application/json, text/plain, */*",
 
         "user-id": userId,
         "store-id": storeId,
-        "branch-id": "MZ01",
-        "class-store": "A",
-        "app-name": "STR-PDA",
-        platform: "ANDROID",
+
+        "branch-id":
+          request.headers.get("branch-id") || "MZ01",
+
+        "class-store":
+          request.headers.get("class-store") || "A",
+
+        "app-name":
+          request.headers.get("app-name") || "STR-PDA",
+
+        platform:
+          request.headers.get("platform") || "ANDROID",
 
         "api-key":
+          request.headers.get("api-key") ||
           "iVOZX9MLMKrj1L8R23uFlaryMR1VGMXG",
 
         "mac-addr":
+          request.headers.get("mac-addr") ||
           "712f8db18eeb1816",
       },
 
@@ -57,7 +67,7 @@ export async function GET(request: NextRequest) {
 
     const contentType =
       response.headers.get("content-type") ||
-      "application/octet-stream";
+      "application/json";
 
     const body = await response.arrayBuffer();
 
@@ -72,7 +82,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(
       {
         success: false,
-        message: "Gagal mengambil Daily Performance",
+        message: "Gagal mengambil Daily Report Online",
         error:
           error instanceof Error
             ? error.message

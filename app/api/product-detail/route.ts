@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const ALFASTORE_URL =
-  "https://app.alfastore.co.id/to/api/cex/get_product_detail/";
+  "https://app.alfastore.co.id/prd/api/cex/get_product_detail/";
 
 export const dynamic = "force-dynamic";
 
@@ -31,29 +31,40 @@ export async function GET(request: NextRequest) {
       method: "GET",
 
       headers: {
-        Accept: "application/json, text/plain, */*",
+        "Content-Type": "application/json",
+        Accept: "application/json",
 
-        "store-id": storeId,
+        "Api-Key": "iVOZX9MLmKrj1L8R23uF1aryMR1vGMXG",
 
-        "branch-id":
-          request.headers.get("branch-id") || "MZ01",
+        "App-Name": "CEXP-CLOUD",
+        "App-Uid": "10365",
 
-        "class-store":
-          request.headers.get("class-store") || "A",
+        "Branch-Id": "MZ01",
+        "Class-Store": "A",
 
-        "app-name":
-          request.headers.get("app-name") || "STR-PDA",
+        "Company-Ext": "",
+        "Company-Id": "SAT",
 
-        platform:
-          request.headers.get("platform") || "ANDROID",
+        "Ip-Addr": "0.0.0.0",
 
-        "api-key":
-          request.headers.get("api-key") ||
-          "iVOZX9MLMKrj1L8R23uFlaryMR1VGMXG",
+        "Mac-Addr": "712f8db18eeb1816",
 
-        "mac-addr":
-          request.headers.get("mac-addr") ||
-          "712f8db18eeb1816",
+        Platform: "ANDROID",
+
+        "Shard-Id": "",
+
+        Sn: "712f8db18eeb1816",
+
+        "Store-Id": storeId,
+        "Store-Id-Ext": "",
+
+        "User-Id": "23067884",
+
+        "Version-App": "2025.05.20.1",
+        "Version-Code": "9",
+
+        "User-Agent":
+          "Dalvik/2.1.0 (Linux; U; Android 15; Infinix X6885 Build/AP3A.240905.015.A2)",
       },
 
       cache: "no-store",
@@ -77,7 +88,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(
       {
         success: false,
-        message: "Gagal mengambil Product Detail",
+        message: "Gagal mengambil product detail",
         error:
           error instanceof Error
             ? error.message

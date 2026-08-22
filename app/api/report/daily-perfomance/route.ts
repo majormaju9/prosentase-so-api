@@ -5,6 +5,7 @@ const ALFASTORE_URL =
 
 
 export async function GET(req: NextRequest) {
+
   try {
 
     const { searchParams } = new URL(req.url);
@@ -22,43 +23,42 @@ export async function GET(req: NextRequest) {
       searchParams.get("periode2") || "22-08-2026";
 
 
-    const apiUrl = new URL(ALFASTORE_URL);
+    const url = new URL(ALFASTORE_URL);
 
-    apiUrl.searchParams.set(
+
+    url.searchParams.set(
       "storeId",
       storeId
     );
 
-    apiUrl.searchParams.set(
+    url.searchParams.set(
       "userId",
       userId
     );
 
-    apiUrl.searchParams.set(
+    url.searchParams.set(
       "periode1",
       periode1
     );
 
-    apiUrl.searchParams.set(
+    url.searchParams.set(
       "periode2",
       periode2
     );
 
-    // parameter asli Jasper Report
-    apiUrl.searchParams.set(
-      "#toolbar",
-      "0"
-    );
-
 
     const response = await fetch(
-      apiUrl.toString(),
+      url.toString(),
       {
-        method: "GET",
+        method:"GET",
 
-        headers: {
+        headers:{
 
-          "Accept": "*/*",
+          "Accept":
+            "application/pdf",
+
+          "User-Agent":
+            "Dalvik/2.1.0 (Linux; Android 15)",
 
           "Api-Key":
             process.env.ALFA_API_KEY || "",
@@ -82,51 +82,39 @@ export async function GET(req: NextRequest) {
             "2025.05.20.1",
 
           "Version-Code":
-            "9",
-
-          "User-Agent":
-            "Dalvik/2.1.0 (Linux; Android 15)"
+            "9"
         }
       }
     );
 
 
-    const contentType =
-      response.headers.get(
-        "content-type"
-      ) || "application/pdf";
-
-
-    const buffer =
+    const pdf =
       await response.arrayBuffer();
 
 
     return new NextResponse(
-      buffer,
+      pdf,
       {
         status: response.status,
 
-        headers: {
+        headers:{
 
           "Content-Type":
-            contentType,
+            "application/pdf",
 
           "Content-Disposition":
-            "inline"
+            "inline; filename=daily_performance.pdf"
         }
       }
     );
 
 
-  } catch (error:any) {
+  } catch(error:any){
 
     return NextResponse.json(
       {
         success:false,
-        message:
-          "AlfaStore API error",
-        error:
-          error.message
+        error:error.message
       },
       {
         status:500
@@ -134,4 +122,5 @@ export async function GET(req: NextRequest) {
     );
 
   }
+
 }

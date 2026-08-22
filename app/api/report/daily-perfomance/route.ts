@@ -1,60 +1,133 @@
-// src/routes/router.ts
+import { NextRequest, NextResponse } from "next/server";
 
-import { Router, Request, Response } from "express";
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-const router = Router();
-
-const ALFASTORE_BASE_URL =
-  "https://app.alfastore.co.id/prd/api/rpt/laporan";
-
-router.get("/daily_performance", async (req: Request, res: Response) => {
+export async function GET(req: NextRequest) {
   try {
-    const { storeId, periode1, periode2 } = req.query;
+    const { searchParams } = new URL(req.url);
 
-    if (!storeId || !periode1 || !periode2) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Parameter storeId, periode1, dan periode2 wajib diisi",
-      });
+    const storeId = searchParams.get("storeId") || "M604";
+    const userId = searchParams.get("userId") || "23067884";
+    const periode1 = searchParams.get("periode1");
+    const periode2 = searchParams.get("periode2");
+
+    if (!periode1 || !periode2) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "periode1 dan periode2 wajib diisi",
+        },
+        { status: 400 }
+      );
     }
 
-    const params = new URLSearchParams({
-      storeId: String(storeId),
-      periode1: String(periode1),
-      periode2: String(periode2),
+    const targetUrl =
+      "https://app.alfastore.co.id/prd/api/jasper-rpt/laporan/daily_performance/download_report";
+
+    const url = new URL(targetUrl);
+
+    url.searchParams.set("storeId", storeId);
+    url.searchParams.set("userId", userId);
+    url.searchParams.set("periode1", periode1);
+    url.searchParams.set("periode2", periode2);
+
+    const response = await fetch(url.toString(), {
+      method: "GET",
+
+      headers: {
+        Accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+
+        "user-id": userId,
+
+        "User-Agent":
+          req.headers.get("user-agent") ||
+          "Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/150.0.0.0 Mobile Safari/537.36",
+
+        "store-id-ext": "",
+        "branch-id": "MZ01",
+        "version-app": "",
+        platform: "ANDROID",
+        "class-store": "A",
+        "app-name": "STR-PDA",
+        "company-ext": "",
+
+        "sec-ch-ua":
+          '"Not;A=Brand";v="8", "Chromium";v="150", "Android WebView";v="150"',
+        "sec-ch-ua-mobile": "?1",
+        "sec-ch-ua-platform": '"Android"',
+
+        "company-id": "",
+
+        "api-key":
+          process.env.ALFA_API_KEY ||
+          "iVOZX9MLMKrj1L8R23uFlaryMR1VGMXG",
+
+        "Upgrade-Insecure-Requests": "1",
+
+        "version-code": "",
+        "content-type": "application/json",
+
+        "mac-addr": "712f8db18eeb1816",
+        Sn: "",
+        "store-id": storeId,
+        "app-uid": "",
+
+        "Accept-Encoding": "gzip",
+      },
+
+      cache: "no-store",
+      redirect: "follow",
     });
 
-    const originalUrl =
-      `${ALFASTORE_BASE_URL}/daily_performance?${params.toString()}`;
+    if (!response.ok) {
+      const body = await response.text();
 
-    const response = await fetch(originalUrl, {
-      method: "GET",
+      return NextResponse.json(
+        {
+          success: false,
+          status: response.status,
+          statusText: response.statusText,
+          error: body,
+        },
+        {
+          status: response.status,
+        }
+      );
+    }
+
+    const data = await response.arrayBuffer();
+
+    const contentType =
+      response.headers.get("content-type") ||
+      "application/octet-stream";
+
+    const contentDisposition =
+      response.headers.get("content-disposition") ||
+      `attachment; filename="daily_performance_${storeId}_${periode1}_${periode2}.pdf"`;
+
+    return new NextResponse(data, {
+      status: 200,
       headers: {
-        Accept: "application/json",
-        "User-Agent": "Mozilla/5.0",
+        "Content-Type": contentType,
+        "Content-Disposition": contentDisposition,
+        "Cache-Control": "no-store",
       },
     });
-
-    const contentType = response.headers.get("content-type") || "";
-
-    let data: any;
-
-    if (contentType.includes("application/json")) {
-      data = await response.json();
-    } else {
-      data = await response.text();
-    }
-
-    return res.status(response.status).send(data);
   } catch (error) {
-    console.error("Daily Performance Error:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: "Gagal mengambil Daily Performance",
-    });
+    return NextResponse.json(
+      {
+        success: false,
+        message: "Internal Server Error",
+        error:
+          error instanceof Error
+            ? error.message
+            : String(error),
+      },
+      {
+        status: 500,
+      }
+    );
   }
-});
-
-export default router;
+}

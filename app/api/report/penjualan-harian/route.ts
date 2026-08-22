@@ -1,46 +1,94 @@
 import { NextRequest, NextResponse } from "next/server";
 
+const ALFASTORE_URL =
+  "https://app.alfastore.co.id/prd/api/rpt/laporan/laporan_harian_penjualan_toko";
+
+
 export async function GET(req: NextRequest) {
   try {
+
     const { searchParams } = new URL(req.url);
 
-    const storeId = searchParams.get("storeId");
-    const periode1 = searchParams.get("periode1");
+    const storeId =
+      searchParams.get("storeId") || "XB78";
 
-    if (!storeId || !periode1) {
-      return NextResponse.json(
-        {
-          error: "storeId dan periode1 wajib diisi"
-        },
-        { status: 400 }
-      );
-    }
+    const periode1 =
+      searchParams.get("periode1") || "25-04-2026";
 
-    const url =
-      `https://app.alfastore.co.id/prd/api/rpt/laporan/laporan_harian_penjualan_toko` +
-      `?storeId=${storeId}` +
-      `&periode1=${periode1}`;
 
-    const response = await fetch(url, {
+    const url = new URL(ALFASTORE_URL);
+
+    url.searchParams.set("storeId", storeId);
+    url.searchParams.set("periode1", periode1);
+
+
+    const response = await fetch(url.toString(), {
+
       method: "GET",
+
       headers: {
-        "User-Agent": "Mozilla/5.0",
-        "Accept": "application/json"
+
+        "Accept": "*/*",
+
+        "Api-Key":
+          process.env.ALFA_API_KEY || "",
+
+        "App-Name":
+          "CEXP-CLOUD",
+
+        "App-Uid":
+          "10365",
+
+        "Store-Id":
+          storeId,
+
+        "Platform":
+          "ANDROID",
+
+        "Version-App":
+          "2025.05.20.1",
+
+        "Version-Code":
+          "9",
+
+        "User-Agent":
+          "Dalvik/2.1.0 (Linux; Android 15)"
+
       }
+
     });
 
-    const data = await response.json();
 
-    return NextResponse.json(data, {
-      status: response.status
-    });
+    const contentType =
+      response.headers.get("content-type") || "";
 
-  } catch (error: any) {
+
+    const data =
+      contentType.includes("json")
+        ? await response.json()
+        : await response.text();
+
+
+    return NextResponse.json(
+      data,
+      {
+        status: response.status
+      }
+    );
+
+
+  } catch (error:any) {
+
     return NextResponse.json(
       {
-        error: error.message
+        success:false,
+        message:"AlfaStore API error",
+        error:error.message
       },
-      { status: 500 }
+      {
+        status:500
+      }
     );
+
   }
 }

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const ALFASTORE_URL =
-  "https://app.alfastore.co.id/prd/api/rpt/laporan/daily_report_online";
+  "https://app.alfastore.co.id/prd/api/rpt/laporan/daily_performance";
 
 export const dynamic = "force-dynamic";
 
@@ -10,16 +10,15 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
 
     const storeId = searchParams.get("storeId");
-    const userId = searchParams.get("userId");
     const periode1 = searchParams.get("periode1");
     const periode2 = searchParams.get("periode2");
 
-    if (!storeId || !userId || !periode1 || !periode2) {
+    if (!storeId || !periode1 || !periode2) {
       return NextResponse.json(
         {
           success: false,
           message:
-            "storeId, userId, periode1, dan periode2 wajib diisi",
+            "storeId, periode1, dan periode2 wajib diisi",
         },
         { status: 400 }
       );
@@ -28,16 +27,15 @@ export async function GET(request: NextRequest) {
     const upstream = new URL(ALFASTORE_URL);
 
     upstream.searchParams.set("storeId", storeId);
-    upstream.searchParams.set("userId", userId);
     upstream.searchParams.set("periode1", periode1);
     upstream.searchParams.set("periode2", periode2);
 
     const response = await fetch(upstream.toString(), {
       method: "GET",
+
       headers: {
         Accept: "application/json, text/plain, */*",
 
-        "user-id": userId,
         "store-id": storeId,
 
         "branch-id":
@@ -82,7 +80,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(
       {
         success: false,
-        message: "Gagal mengambil Daily Report Online",
+        message: "Gagal mengambil Daily Performance",
         error:
           error instanceof Error
             ? error.message

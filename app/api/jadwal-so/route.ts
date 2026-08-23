@@ -1,170 +1,158 @@
 import { NextRequest, NextResponse } from "next/server";
 
+const ALFASTORE_HOST =
+  process.env.ALFASTORE_HOST || "https://app.alfastore.co.id";
 
-const ALFASTORE_URL =
-  "https://app.alfastore.co.id/prd/api/sis/utility/so/get_jadwal/";
+const API_KEY =
+  process.env.ALFASTORE_API_KEY ||
+  "iVOZX9MLmKrj1L8R23uF1aryMR1vGMXG";
 
 
-export async function GET(request: NextRequest) {
+function getHeaders(params: {
+  userId?: string;
+  storeId?: string;
+}) {
+  return {
+    "App-Name": "SO-PDA",
+    "Version-App": "V.2025.10.03.01",
+    "Version-Code": "30",
+
+    "User-Agent":
+      "Dalvik/2.1.0 (Linux; U; Android 15)",
+
+    "App-Uid": params.userId || "",
+    "User-Id": params.userId || "",
+
+    "Store-Id": params.storeId || "",
+    "Store-Id-Ext": "",
+
+    "Shard-Id": "",
+
+    "Ip-Addr": "",
+
+    "Sn": "",
+
+    "Api-Key": API_KEY,
+
+    "AndroidId": "",
+
+    "Branch-Id": "",
+
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+}
+
+
+export async function GET(
+  req: NextRequest
+) {
 
   try {
 
-    const { searchParams } = new URL(request.url);
+    const { searchParams } =
+      new URL(req.url);
+
 
     const storeId =
       searchParams.get("storeId") || "M604";
 
-    const date =
-      searchParams.get("date") || "19/08/2026";
+    const userId =
+      searchParams.get("userId") || "";
 
 
-    const response = await fetch(
-      ALFASTORE_URL,
-      {
+    const periode1 =
+      searchParams.get("periode1") || "";
 
-        method: "POST",
-
-        headers: {
-
-          "Content-Type":
-            "application/json",
-
-          "Accept":
-            "application/json",
-
-          "App-Name":
-            "PDA",
-
-          "Api-Key":
-            "iVOZX9MLmKrj1L8R23uF1aryMR1vGMXG",
-
-          "Version-App":
-            "2024.11.12.09",
-
-          "Store-Id":
-            storeId,
-
-          "User-Id":
-            "23067884",
-
-          "Mac-Addr":
-            "712f8db18eeb1816",
-
-          "AndroidId":
-            "712f8db18eeb1816",
-
-          "User-Agent":
-            "Dalvik/2.1.0 (Linux; U; Android 15; Infinix X6885 Build/AP3A.240905.015.A2)"
-
-        },
+    const periode2 =
+      searchParams.get("periode2") || "";
 
 
-        body: JSON.stringify({
+    /*
+      Endpoint SO-PDA
+      sesuaikan dengan endpoint asli
+      dari hasil capture APK
+    */
 
-          storeId,
+    const url =
+      `${ALFASTORE_HOST}/prd/api/so/laporan/stock_opname` +
+      `?storeId=${storeId}` +
+      `&periode1=${periode1}` +
+      `&periode2=${periode2}`;
 
-          date
 
-        }),
+    const response =
+      await fetch(url, {
 
+        method:"GET",
 
-        cache:
-          "no-store"
+        headers:
+          getHeaders({
+            userId,
+            storeId
+          }),
 
-      }
-    );
+        cache:"no-store"
+
+      });
 
 
     const text =
       await response.text();
 
 
-    let data;
-
+    let data:any;
 
     try {
 
-      data = JSON.parse(text);
+      data =
+        JSON.parse(text);
 
     } catch {
 
-      data = {
+      data =
+      {
         html:text
       };
 
     }
 
 
+    return NextResponse.json({
 
-    if (!response.ok) {
+      success:
+        response.ok,
 
-      return NextResponse.json(
-        {
+      status:
+        response.status,
 
-          success:false,
-
-          message:
-            "AlfaStore API error",
-
-          status:
-            response.status,
-
-          data
-
-        },
-        {
-          status:response.status
-        }
-      );
-
-    }
-
-
-
-    return NextResponse.json(
-      {
-
-        success:true,
-
-        source:
-          "PDA",
-
-        endpoint:
-          "sis/utility/so/get_jadwal",
-
-        request:{
-
-          storeId,
-
-          date
-
-        },
-
-        data
-
-      }
-    );
-
-
-
-  } catch(error) {
-
-
-    return NextResponse.json(
-      {
-
-        success:false,
-
-        message:
-          error instanceof Error
-          ? error.message
-          : String(error)
-
+      request:{
+        app:"SO-PDA",
+        storeId,
+        userId,
+        periode1,
+        periode2
       },
-      {
-        status:500
-      }
-    );
+
+      data
+
+    });
+
+
+  } catch(error:any){
+
+
+    return NextResponse.json({
+
+      success:false,
+
+      message:
+        error.message
+
+    },{
+      status:500
+    });
+
 
   }
 

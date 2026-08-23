@@ -1,62 +1,61 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const ALFASTORE_URL =
-  "https://app.alfastore.co.id/prd/api/sis/utility/so/get_jadwal";
+  "https://app.alfastore.co.id/prd/api/rpt/laporan_so/get_jadwal";
 
 
 export async function GET(request: NextRequest) {
+
   try {
 
     const { searchParams } = new URL(request.url);
 
     const storeId = searchParams.get("storeId");
-    const date = searchParams.get("date");
+    const dateSo = searchParams.get("dateSo");
 
 
-    if (!storeId || !date) {
+    if (!storeId || !dateSo) {
       return NextResponse.json(
         {
-          success: false,
-          message: "storeId dan date wajib diisi",
+          success:false,
+          message:"storeId dan dateSo wajib diisi"
         },
         {
-          status: 400,
+          status:400
         }
       );
     }
 
 
     const apiUrl =
-      `${ALFASTORE_URL}` +
-      `?storeId=${encodeURIComponent(storeId)}` +
-      `&date=${encodeURIComponent(date)}`;
+      `${ALFASTORE_URL}`+
+      `?storeId=${encodeURIComponent(storeId)}`+
+      `&dateSo=${encodeURIComponent(dateSo)}`;
 
 
-    const response = await fetch(apiUrl, {
-      method: "GET",
-
-      headers: {
-        "App-Name": "CEXP-CLOUD",
-        "Accept": "application/json",
+    const response = await fetch(apiUrl,{
+      method:"GET",
+      headers:{
+        "App-Name":"CEXP-CLOUD",
+        "Accept":"application/json"
       },
-
-      cache: "no-store",
+      cache:"no-store"
     });
 
 
     const data = await response.text();
 
 
-    if (!response.ok) {
+    if(!response.ok){
       return NextResponse.json(
         {
-          success: false,
-          message: "AlfaStore API error",
-          status: response.status,
-          data,
+          success:false,
+          message:"AlfaStore API error",
+          status:response.status,
+          data
         },
         {
-          status: response.status,
+          status:response.status
         }
       );
     }
@@ -64,40 +63,37 @@ export async function GET(request: NextRequest) {
 
     let result;
 
-    try {
+    try{
       result = JSON.parse(data);
-    } catch {
+    }catch{
       result = data;
     }
 
 
     return NextResponse.json({
-      success: true,
-      endpoint: "get_jadwal_so",
+      success:true,
       storeId,
-      date,
-      data: result,
+      dateSo,
+      data:result
     });
 
 
-  } catch (error) {
-
-    console.error("JADWAL SO ERROR:", error);
-
+  }catch(error){
 
     return NextResponse.json(
       {
-        success: false,
-        message: "Gagal mengambil jadwal SO AlfaStore",
+        success:false,
+        message:"Gagal mengambil jadwal SO",
         error:
           error instanceof Error
-            ? error.message
-            : String(error),
+          ? error.message
+          : String(error)
       },
       {
-        status: 500,
+        status:500
       }
     );
 
   }
+
 }

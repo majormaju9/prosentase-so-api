@@ -8,38 +8,60 @@ const API_KEY =
   "iVOZX9MLmKrj1L8R23uF1aryMR1vGMXG";
 
 
-function getHeaders(params: {
-  userId?: string;
-  storeId?: string;
-}) {
+function getHeaders(
+  userId: string,
+  storeId: string
+) {
   return {
+
+    // Header mengikuti SO-PDA APK
     "App-Name": "SO-PDA",
-    "Version-App": "V.2025.10.03.01",
-    "Version-Code": "30",
+
+    "Version-App":
+      "V.2025.10.03.01",
+
+    "Version-Code":
+      "30",
 
     "User-Agent":
       "Dalvik/2.1.0 (Linux; U; Android 15)",
 
-    "App-Uid": params.userId || "",
-    "User-Id": params.userId || "",
+    "App-Uid":
+      userId,
 
-    "Store-Id": params.storeId || "",
-    "Store-Id-Ext": "",
+    "User-Id":
+      userId,
 
-    "Shard-Id": "",
+    "Store-Id":
+      storeId,
 
-    "Ip-Addr": "",
+    "Store-Id-Ext":
+      "",
 
-    "Sn": "",
+    "Shard-Id":
+      "",
 
-    "Api-Key": API_KEY,
+    "Ip-Addr":
+      "",
 
-    "AndroidId": "",
+    "Sn":
+      "",
 
-    "Branch-Id": "",
+    "Api-Key":
+      API_KEY,
 
-    "Content-Type": "application/json",
-    Accept: "application/json",
+    "AndroidId":
+      "",
+
+    "Branch-Id":
+      "",
+
+    "Content-Type":
+      "application/json",
+
+    Accept:
+      "application/json"
+
   };
 }
 
@@ -57,42 +79,30 @@ export async function GET(
     const storeId =
       searchParams.get("storeId") || "M604";
 
+
     const userId =
       searchParams.get("userId") || "";
 
 
-    const periode1 =
-      searchParams.get("periode1") || "";
-
-    const periode2 =
-      searchParams.get("periode2") || "";
-
-
-    /*
-      Endpoint SO-PDA
-      sesuaikan dengan endpoint asli
-      dari hasil capture APK
-    */
-
     const url =
-      `${ALFASTORE_HOST}/prd/api/so/laporan/stock_opname` +
-      `?storeId=${storeId}` +
-      `&periode1=${periode1}` +
-      `&periode2=${periode2}`;
+      `${ALFASTORE_HOST}` +
+      `/prd/api/rpt/laporan_so/jadwal_so_vs_sudah_so` +
+      `?storeId=${storeId}`;
 
 
     const response =
       await fetch(url, {
 
-        method:"GET",
+        method: "GET",
 
         headers:
-          getHeaders({
+          getHeaders(
             userId,
             storeId
-          }),
+          ),
 
-        cache:"no-store"
+        cache:
+          "no-store"
 
       });
 
@@ -101,7 +111,7 @@ export async function GET(
       await response.text();
 
 
-    let data:any;
+    let data;
 
     try {
 
@@ -126,20 +136,27 @@ export async function GET(
       status:
         response.status,
 
+
       request:{
-        app:"SO-PDA",
+        app:
+          "SO-PDA",
+
+        endpoint:
+          "/jadwal_so_vs_sudah_so",
+
         storeId,
-        userId,
-        periode1,
-        periode2
+
+        userId
+
       },
+
 
       data
 
     });
 
 
-  } catch(error:any){
+  } catch(error:any) {
 
 
     return NextResponse.json({

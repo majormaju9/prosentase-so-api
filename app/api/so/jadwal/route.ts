@@ -1,23 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const ALFASTORE_URL =
-  "https://app.alfastore.co.id/prd/api/sis/utility/so/get_jadwal";
+  "https://app.alfastore.co.id/prd/api/so/utility/get_jadwal";
 
 
 export async function GET(request: NextRequest) {
   try {
-
     const { searchParams } = new URL(request.url);
 
     const storeId = searchParams.get("storeId");
-    const date = searchParams.get("date");
 
 
-    if (!storeId || !date) {
+    if (!storeId) {
       return NextResponse.json(
         {
           success: false,
-          message: "storeId dan date wajib diisi",
+          message: "storeId wajib diisi",
         },
         {
           status: 400,
@@ -28,12 +26,10 @@ export async function GET(request: NextRequest) {
 
     const apiUrl =
       `${ALFASTORE_URL}` +
-      `?storeId=${encodeURIComponent(storeId)}` +
-      `&date=${encodeURIComponent(date)}`;
+      `?storeId=${encodeURIComponent(storeId)}`;
 
 
     const response = await fetch(apiUrl, {
-
       method: "GET",
 
       headers: {
@@ -43,7 +39,6 @@ export async function GET(request: NextRequest) {
       },
 
       cache: "no-store",
-
     });
 
 
@@ -51,7 +46,6 @@ export async function GET(request: NextRequest) {
 
 
     if (!response.ok) {
-
       return NextResponse.json(
         {
           success: false,
@@ -64,7 +58,6 @@ export async function GET(request: NextRequest) {
           status: response.status,
         }
       );
-
     }
 
 
@@ -80,9 +73,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(
       {
         success: true,
-        endpoint: "sis_utility_so_get_jadwal",
+        endpoint: "so_utility_get_jadwal",
         storeId,
-        date,
         data,
       },
       {

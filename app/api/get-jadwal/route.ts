@@ -2,34 +2,28 @@ import { NextRequest, NextResponse } from "next/server";
 
 
 const ALFASTORE_URL =
-  "https://app.alfastore.co.id/prd/api/so/utility/get_jadwal";
+  "https://app.alfastore.co.id/prd/api/sis/utility/so/get_jadwal";
 
 
-export async function GET(request: NextRequest) {
+export async function POST(request: NextRequest) {
 
   try {
 
-    const { searchParams } = new URL(request.url);
+
+    const body = await request.json();
 
 
     const storeId =
-      searchParams.get("storeId") || "M604";
+      body.storeId || "M604";
 
     const date =
-      searchParams.get("date") || "19-08-2026";
+      body.date || "19-08-2026";
 
 
 
-    const apiUrl =
-      `${ALFASTORE_URL}` +
-      `?storeId=${encodeURIComponent(storeId)}` +
-      `&date=${encodeURIComponent(date)}`;
+    const response = await fetch(ALFASTORE_URL, {
 
-
-
-    const response = await fetch(apiUrl, {
-
-      method: "GET",
+      method: "POST",
 
 
       headers: {
@@ -58,7 +52,7 @@ export async function GET(request: NextRequest) {
 
 
         "App-Uid":
-          "",
+          "10365",
 
 
         "User-Id":
@@ -67,10 +61,6 @@ export async function GET(request: NextRequest) {
 
         "Store-Id":
           storeId,
-
-
-        "Store-Id-Ext":
-          "",
 
 
         "Shard-Id":
@@ -98,7 +88,7 @@ export async function GET(request: NextRequest) {
 
 
         "Company-Id":
-          "",
+          "SAT",
 
 
         "Company-Ext":
@@ -119,6 +109,15 @@ export async function GET(request: NextRequest) {
       },
 
 
+      body: JSON.stringify({
+
+        storeId,
+
+        date
+
+      }),
+
+
       cache:
         "no-store"
 
@@ -126,20 +125,22 @@ export async function GET(request: NextRequest) {
 
 
 
-    const raw = await response.text();
+    const text =
+      await response.text();
 
 
-    let data:any;
+
+    let data;
 
 
     try {
 
-      data = JSON.parse(raw);
+      data = JSON.parse(text);
 
     } catch {
 
       data = {
-        html: raw
+        html:text
       };
 
     }
@@ -158,11 +159,6 @@ export async function GET(request: NextRequest) {
         status:
           response.status,
 
-        request:{
-          storeId,
-          date
-        },
-
         data
 
       },{
@@ -178,18 +174,15 @@ export async function GET(request: NextRequest) {
       success:true,
 
       source:
-        "AlfaStore LPB-CLOUD",
-
+        "LPB-CLOUD",
 
       endpoint:
         "get_jadwal",
-
 
       request:{
         storeId,
         date
       },
-
 
       data
 

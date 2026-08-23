@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
 
         "App-Name":
           process.env.ALFA_APP_NAME ??
-          "S0-PDA",
+          "SO-PDA",
 
         "Version-App":
           process.env.ALFA_VERSION_APP ??

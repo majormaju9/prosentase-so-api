@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const ALFASTORE_URL =
-  "https://app.alfastore.co.id/prd/api/sis/utility/so/get_jadwal";
+  "https://app.alfastore.co.id/prd/api/so/utility/get_jadwal";
 
 
 export async function GET(request: NextRequest) {
+
   try {
+
     const { searchParams } = new URL(request.url);
 
     const storeId = searchParams.get("storeId");
@@ -13,97 +15,115 @@ export async function GET(request: NextRequest) {
 
 
     if (!storeId || !date) {
+
       return NextResponse.json(
         {
-          success: false,
-          message: "storeId dan date wajib diisi",
+          success:false,
+          message:"storeId dan date wajib diisi"
         },
         {
-          status: 400,
+          status:400
         }
       );
+
     }
 
 
-    const apiUrl =
+    const url =
       `${ALFASTORE_URL}` +
       `?storeId=${encodeURIComponent(storeId)}` +
       `&date=${encodeURIComponent(date)}`;
 
 
-    const response = await fetch(apiUrl, {
-      method: "GET",
+    const res = await fetch(url,{
+      method:"GET",
 
-      headers: {
-        "App-Name": "CEXP-CLOUD",
-        "User-Agent": "Mozilla/5.0",
+      headers:{
+        "App-Name":"CEXP-CLOUD",
+        "User-Agent":"Mozilla/5.0",
+        "Accept":"application/json"
       },
 
-      cache: "no-store",
+      cache:"no-store"
     });
 
 
-    const contentType = response.headers.get("content-type") || "";
 
-    let data;
+    const text = await res.text();
 
 
-    if (contentType.includes("application/json")) {
-      data = await response.json();
-    } else {
-      const text = await response.text();
+    let data:any;
+
+
+    try {
+
+      data = JSON.parse(text);
+
+    } catch {
 
       data = {
-        html: text,
+        html:text
       };
+
     }
 
 
-    if (!response.ok) {
+
+    if(!res.ok){
+
       return NextResponse.json(
         {
-          success: false,
-          message: "AlfaStore API error",
-          status: response.status,
-          data,
+          success:false,
+          status:res.status,
+          message:"AlfaStore API error",
+          data
         },
         {
-          status: response.status,
+          status:res.status
         }
       );
+
     }
+
 
 
     return NextResponse.json({
-      success: true,
-      source: "AlfaStore",
-      endpoint: "get_jadwal",
-      parameter: {
+
+      success:true,
+
+      endpoint:"get_jadwal",
+
+      parameter:{
         storeId,
-        date,
+        date
       },
-      data,
+
+      data
+
     });
 
 
-  } catch (error) {
 
-    console.error("GET JADWAL ERROR:", error);
+  } catch(error){
 
 
-    return NextResponse.json(
-      {
-        success: false,
-        message: "Gagal mengambil jadwal SO AlfaStore",
-        error:
-          error instanceof Error
-            ? error.message
-            : String(error),
-      },
-      {
-        status: 500,
-      }
-    );
+    return NextResponse.json({
+
+      success:false,
+
+      message:"Router error",
+
+      error:
+        error instanceof Error
+        ? error.message
+        : String(error)
+
+    },
+    {
+      status:500
+    });
+
 
   }
+
 }

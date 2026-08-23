@@ -1,65 +1,103 @@
-import type { VercelRequest, VercelResponse } from "@vercel/node";
+import { NextRequest, NextResponse } from "next/server";
 
-const API_URL =
-  "https://app.alfastore.co.id/prd/api/so/utility/get_jadwal";
+const ALFASTORE_URL =
+  "https://app.alfastore.co.id/prd/api/sis/utility/so/get_jadwal";
 
 
-export default async function handler(
-  req: VercelRequest,
-  res: VercelResponse
-) {
-
+export async function GET(request: NextRequest) {
   try {
 
-    if (req.method !== "GET") {
-      return res.status(405).json({
-        success: false,
-        message: "Method tidak diizinkan"
-      });
+    const { searchParams } = new URL(request.url);
+
+    const storeId = searchParams.get("storeId");
+    const date = searchParams.get("date");
+
+
+    if (!storeId || !date) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "storeId dan date wajib diisi",
+        },
+        {
+          status: 400,
+        }
+      );
     }
 
 
-    const { storeId } = req.query;
+    const apiUrl =
+      `${ALFASTORE_URL}` +
+      `?storeId=${encodeURIComponent(storeId)}` +
+      `&date=${encodeURIComponent(date)}`;
 
 
-    if (!storeId) {
-      return res.status(400).json({
-        success: false,
-        message: "storeId wajib diisi"
-      });
-    }
+    const response = await fetch(apiUrl, {
+      method: "GET",
 
-
-    const url = `${API_URL}?storeId=${storeId}`;
-
-
-    const response = await fetch(url, {
       headers: {
-        Accept: "application/json",
-        "User-Agent": "Mozilla/5.0"
-      }
+        "App-Name": "CEXP-CLOUD",
+        "Accept": "application/json",
+      },
+
+      cache: "no-store",
     });
 
 
-    const result = await response.json();
+    const data = await response.text();
 
 
-    return res.status(200).json({
+    if (!response.ok) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "AlfaStore API error",
+          status: response.status,
+          data,
+        },
+        {
+          status: response.status,
+        }
+      );
+    }
+
+
+    let result;
+
+    try {
+      result = JSON.parse(data);
+    } catch {
+      result = data;
+    }
+
+
+    return NextResponse.json({
       success: true,
-      endpoint: "jadwal-so",
+      endpoint: "get_jadwal_so",
       storeId,
-      data: result
+      date,
+      data: result,
     });
 
 
-  } catch (error: any) {
+  } catch (error) {
 
-    return res.status(500).json({
-      success: false,
-      message: "Gagal mengambil jadwal SO",
-      error: error.message
-    });
+    console.error("JADWAL SO ERROR:", error);
+
+
+    return NextResponse.json(
+      {
+        success: false,
+        message: "Gagal mengambil jadwal SO AlfaStore",
+        error:
+          error instanceof Error
+            ? error.message
+            : String(error),
+      },
+      {
+        status: 500,
+      }
+    );
 
   }
-
 }

@@ -1,161 +1,49 @@
-import { NextRequest, NextResponse } from "next/server";
+headers:{
+  "Content-Type":"application/json",
+  "Accept":"application/json",
 
-const ALFASTORE_URL =
-  "https://app.alfastore.co.id/prd/api/so/utility/get_jadwal";
+  "Api-Key":
+    "ivOZX9MLMKrjl8R23uFlaryMRIvGMXG",
 
+  "App-Name":
+    "LPB-CLOUD",
 
-export async function GET(request: NextRequest) {
+  "Version-App":
+    "V.2025.11.25.04",
 
-  try {
+  "Version-Code":
+    "30",
 
-    const { searchParams } = new URL(request.url);
+  "App-Uid":
+    "",
 
-    const storeId =
-      searchParams.get("storeId") || "M604";
+  "User-Id":
+    "23067884",
 
-    const date =
-      searchParams.get("date") || "19-08-2026";
+  "Store-Id":
+    "M604",
 
+  "Shard-Id":
+    "",
 
-    const apiUrl =
-      `${ALFASTORE_URL}` +
-      `?storeId=${encodeURIComponent(storeId)}` +
-      `&date=${encodeURIComponent(date)}`;
+  "Ip-Addr":
+    "10.1.10.1",
 
+  "Sn":
+    "712f8db18eeb1816",
 
-    const response = await fetch(apiUrl, {
+  "Android-Id":
+    "712f8db18eeb1816",
 
-      method: "GET",
+  "Branch-Id":
+    "MZ01",
 
-      headers: {
+  "Platform":
+    "ANDROID",
 
-        "Content-Type": "application/json",
+  "Mac-Addr":
+    "712f8db18eeb1816",
 
-        "Accept": "application/json",
-
-        "Api-Key":
-          "iVOZX9MLmKrj1L8R23uF1aryMR1vGMXG",
-
-        "App-Name":
-          "CEXP-CLOUD",
-
-        "App-Uid":
-          "10365",
-
-        "Branch-Id":
-          "MZ01",
-
-        "Class-Store":
-          "A",
-
-        "Company-Id":
-          "SAT",
-
-        "Ip-Addr":
-          "0.0.0.0",
-
-        "Mac-Addr":
-          "712f8db18eeb1816",
-
-        "Platform":
-          "ANDROID",
-
-        "Shard-Id":
-          "Sn",
-
-        "Sn":
-          "712f8db18eeb1816",
-
-        "Store-Id":
-          storeId,
-
-        "User-Id":
-          "23067884",
-
-        "Version-App":
-          "2025.05.20.1",
-
-        "Version-Code":
-          "9",
-
-        "User-Agent":
-          "Dalvik/2.1.0 (Linux; U; Android 15; Infinix X6885 Build/AP3A.240905.015.A2)"
-
-      },
-
-      cache:"no-store"
-
-    });
-
-
-    const result = await response.text();
-
-
-    let data;
-
-    try {
-
-      data = JSON.parse(result);
-
-    } catch {
-
-      data = result;
-
-    }
-
-
-    if(!response.ok){
-
-      return NextResponse.json({
-
-        success:false,
-
-        status:response.status,
-
-        message:"AlfaStore API error",
-
-        data
-
-      },{
-        status:response.status
-      });
-
-    }
-
-
-    return NextResponse.json({
-
-      success:true,
-
-      source:"AlfaStore",
-
-      endpoint:"get_jadwal",
-
-      request:{
-        storeId,
-        date
-      },
-
-      data
-
-    });
-
-
-  } catch(error){
-
-    return NextResponse.json({
-
-      success:false,
-
-      message:
-        error instanceof Error
-        ? error.message
-        : String(error)
-
-    },{
-      status:500
-    });
-
-  }
-
+  "User-Agent":
+    "Dalvik/2.1.0 (Linux; U; Android 15; Infinix X6885 Build/AP3A.240905.015.A2)"
 }

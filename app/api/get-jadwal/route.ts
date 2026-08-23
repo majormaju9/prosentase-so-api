@@ -10,90 +10,128 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url);
 
-    const storeId = searchParams.get("storeId");
-    const date = searchParams.get("date");
+    const storeId =
+      searchParams.get("storeId") || "M604";
+
+    const date =
+      searchParams.get("date") || "19-08-2026";
 
 
-    if (!storeId || !date) {
-
-      return NextResponse.json(
-        {
-          success:false,
-          message:"storeId dan date wajib diisi"
-        },
-        {
-          status:400
-        }
-      );
-
-    }
-
-
-    const url =
+    const apiUrl =
       `${ALFASTORE_URL}` +
       `?storeId=${encodeURIComponent(storeId)}` +
       `&date=${encodeURIComponent(date)}`;
 
 
-    const res = await fetch(url,{
-      method:"GET",
+    const response = await fetch(apiUrl, {
 
-      headers:{
-        "App-Name":"CEXP-CLOUD",
-        "User-Agent":"Mozilla/5.0",
-        "Accept":"application/json"
+      method: "GET",
+
+      headers: {
+
+        "Content-Type": "application/json",
+
+        "Accept": "application/json",
+
+        "Api-Key":
+          "iVOZX9MLmKrj1L8R23uF1aryMR1vGMXG",
+
+        "App-Name":
+          "CEXP-CLOUD",
+
+        "App-Uid":
+          "10365",
+
+        "Branch-Id":
+          "MZ01",
+
+        "Class-Store":
+          "A",
+
+        "Company-Id":
+          "SAT",
+
+        "Ip-Addr":
+          "0.0.0.0",
+
+        "Mac-Addr":
+          "712f8db18eeb1816",
+
+        "Platform":
+          "ANDROID",
+
+        "Shard-Id":
+          "Sn",
+
+        "Sn":
+          "712f8db18eeb1816",
+
+        "Store-Id":
+          storeId,
+
+        "User-Id":
+          "23067884",
+
+        "Version-App":
+          "2025.05.20.1",
+
+        "Version-Code":
+          "9",
+
+        "User-Agent":
+          "Dalvik/2.1.0 (Linux; U; Android 15; Infinix X6885 Build/AP3A.240905.015.A2)"
+
       },
 
       cache:"no-store"
+
     });
 
 
+    const result = await response.text();
 
-    const text = await res.text();
 
-
-    let data:any;
-
+    let data;
 
     try {
 
-      data = JSON.parse(text);
+      data = JSON.parse(result);
 
     } catch {
 
-      data = {
-        html:text
-      };
+      data = result;
 
     }
 
 
+    if(!response.ok){
 
-    if(!res.ok){
+      return NextResponse.json({
 
-      return NextResponse.json(
-        {
-          success:false,
-          status:res.status,
-          message:"AlfaStore API error",
-          data
-        },
-        {
-          status:res.status
-        }
-      );
+        success:false,
+
+        status:response.status,
+
+        message:"AlfaStore API error",
+
+        data
+
+      },{
+        status:response.status
+      });
 
     }
-
 
 
     return NextResponse.json({
 
       success:true,
 
+      source:"AlfaStore",
+
       endpoint:"get_jadwal",
 
-      parameter:{
+      request:{
         storeId,
         date
       },
@@ -103,26 +141,20 @@ export async function GET(request: NextRequest) {
     });
 
 
-
   } catch(error){
-
 
     return NextResponse.json({
 
       success:false,
 
-      message:"Router error",
-
-      error:
+      message:
         error instanceof Error
         ? error.message
         : String(error)
 
-    },
-    {
+    },{
       status:500
     });
-
 
   }
 

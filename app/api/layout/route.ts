@@ -5,7 +5,6 @@ const API_URL =
 
 
 export async function GET(request: NextRequest) {
-
   try {
 
     const { searchParams } = new URL(request.url);
@@ -39,15 +38,18 @@ export async function GET(request: NextRequest) {
 
       body: JSON.stringify({
 
-        storeId: storeId,
+        method: "photo_layout",
 
-        userId: "23067884",
+        store_id: storeId,
 
-        branchId: "MZ01"
+        branch_id: "MZ01",
+
+        key_kiriman: "SAT"
 
       }),
 
-      cache:"no-store"
+
+      cache: "no-store"
 
     });
 
@@ -55,17 +57,18 @@ export async function GET(request: NextRequest) {
     const text = await response.text();
 
 
-    if(!response.ok){
+    if (!response.ok) {
 
-      return NextResponse.json({
-
-        success:false,
-        status:response.status,
-        data:text
-
-      },{
-        status:response.status
-      });
+      return NextResponse.json(
+        {
+          success:false,
+          status:response.status,
+          data:text
+        },
+        {
+          status:response.status
+        }
+      );
 
     }
 
@@ -73,22 +76,23 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
 
       success:true,
-      data:JSON.parse(text)
+
+      data: JSON.parse(text)
 
     });
 
 
   } catch(error:any){
 
-    return NextResponse.json({
-
-      success:false,
-      message:error.message
-
-    },{
-      status:500
-    });
+    return NextResponse.json(
+      {
+        success:false,
+        message:error.message
+      },
+      {
+        status:500
+      }
+    );
 
   }
-
 }

@@ -10,13 +10,14 @@ function optimizeHtml(html: string) {
 
   return html
 
-    // hapus script agar tidak error di proxy
+    // hapus javascript agar aman di proxy
     .replace(
       /<script[\s\S]*?<\/script>/gi,
       ""
     )
 
-    // tambahan css ringan tanpa merusak tabel asli
+
+    // tambah style tanpa merusak tampilan asli
     .replace(
       "</head>",
       `
@@ -33,7 +34,7 @@ body {
 }
 
 
-/* pertahankan tabel asli */
+/* tabel asli AlfaStore */
 
 table {
 
@@ -50,7 +51,7 @@ th {
 }
 
 
-/* tampilan mobile */
+/* responsive */
 
 @media(max-width:768px){
 
@@ -79,11 +80,11 @@ th {
 
 }
 
-
 </style>
 
 </head>`
     );
+
 
 }
 
@@ -91,36 +92,24 @@ th {
 
 export async function GET(
     request: NextRequest
-){
+) {
 
 
-try{
+try {
 
 
-    const {
-        searchParams
-    } = new URL(request.url);
-
-
-
-    const storeId =
-        searchParams.get("storeId");
-
-
-    const periode1 =
-        searchParams.get("periode1");
-
-
-    const periode2 =
-        searchParams.get("periode2");
+    const { searchParams } =
+        new URL(request.url);
 
 
 
-    if(
-        !storeId ||
-        !periode1 ||
-        !periode2
-    ){
+    // teruskan semua parameter
+    const queryString =
+        searchParams.toString();
+
+
+
+    if(!queryString){
 
         return NextResponse.json(
             {
@@ -128,7 +117,7 @@ try{
                 success:false,
 
                 message:
-                "storeId, periode1, periode2 wajib diisi"
+                "Parameter laporan belum diberikan"
 
             },
             {
@@ -141,19 +130,11 @@ try{
 
 
     const apiUrl =
-
-        `${ALFASTORE_URL}` +
-
-        `?storeId=${encodeURIComponent(storeId)}` +
-
-        `&periode1=${encodeURIComponent(periode1)}` +
-
-        `&periode2=${encodeURIComponent(periode2)}`;
+        `${ALFASTORE_URL}?${queryString}`;
 
 
 
     const response =
-
         await fetch(
 
             apiUrl,
@@ -166,7 +147,11 @@ try{
                 headers:{
 
                     "App-Name":
-                    "CEXP-CLOUD"
+                    "CEXP-CLOUD",
+
+
+                    "User-Agent":
+                    "Mozilla/5.0"
 
                 },
 
@@ -213,9 +198,7 @@ try{
     );
 
 
-
 }
-
 catch(error){
 
 
@@ -224,7 +207,6 @@ catch(error){
         {
 
             success:false,
-
 
             message:
             "Gagal mengambil laporan prosentase SO",

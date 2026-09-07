@@ -15,15 +15,15 @@ export async function POST(request: NextRequest) {
 
 
 
-    if (!body) {
+    if (!body || Object.keys(body).length === 0) {
 
       return NextResponse.json(
         {
-          success: false,
-          message: "Request body kosong",
+          success:false,
+          message:"Request body kosong"
         },
         {
-          status: 400,
+          status:400
         }
       );
 
@@ -31,129 +31,95 @@ export async function POST(request: NextRequest) {
 
 
 
-    const response = await fetch(
-      ALFASTORE_URL,
-      {
-
-        method: "POST",
+    const response = await fetch(ALFASTORE_URL, {
 
 
-        headers: {
+      method:"POST",
 
 
-          "App-Name":
-            "SO-PDA",
+
+      headers:{
 
 
-          "Version-App":
-            "V.2026.04.13.01-alfa",
+        "App-Name":
+          "SO-PDA",
 
 
-          "Version-Code":
-            "28",
+        "Version-App":
+          "V.2026.04.13.01-alfa",
 
 
-          "User-Agent":
-            "Dalvik/2.1.0 (Linux; U; Android 11; PM75 Build/RKQ1.210518.002)",
+        "Version-Code":
+          "28",
 
 
-          "App-Uid":
-            "",
+        "Platform":
+          "ANDROID",
 
 
-          "User-Id":
-            "23067884",
+        "User-Agent":
+          "Dalvik/2.1.0 (Linux; U; Android 11; PM75 Build/RKQ1.210518.002)",
 
 
-          "Store-Id":
-            "M604",
+
+        "Api-Key":
+          "ivOZx9MLmkrj1L8R23uFlaryMR1VGMXG",
 
 
-          "Store-Id-Ext":
-            "",
+
+        "User-Id":
+          "23067884",
 
 
-          "Shard-Id":
-            "",
+
+        "Store-Id":
+          "M604",
 
 
-          "Ip-Addr":
-            "10.1.10.1",
+
+        "Branch-Id":
+          "MZ01",
 
 
-          "Sn":
-            "",
+
+        "AndroidId":
+          "56cb5d6cc7274364",
 
 
-          "Api-Key":
-            "ivOZx9MLmkrj1L8R23uFlaryMR1VGMXG",
+
+        "Mac-Addr":
+          "56cb5d6cc7274364",
 
 
-          "AndroidId":
-            "56cb5d6cc7274364",
+
+        "Content-Type":
+          "application/json",
 
 
-          "Branch-Id":
-            "MZ01",
+        "Accept":
+          "application/json",
 
 
-          "Class-Store":
-            "",
+      },
 
 
-          "Company-Id":
-            "",
+
+      body:
+        JSON.stringify(body),
 
 
-          "Company-Ext":
-            "",
 
+      cache:
+        "no-store"
 
-          "Platform":
-            "ANDROID",
+    });
 
-
-          "Mac-Addr":
-            "56cb5d6cc7274364",
-
-
-          "Host":
-            "app.alfastore.co.id",
-
-
-          "Connection":
-            "Keep-Alive",
-
-
-          "Accept-Encoding":
-            "gzip",
-
-
-          "Content-Type":
-            "application/json",
-
-        },
-
-
-        body:
-          JSON.stringify(body),
-
-
-        cache:
-          "no-store",
-
-      }
-    );
 
 
 
     const text =
       await response.text();
 
-
-
-    const contentType =
-      response.headers.get("content-type") || "";
 
 
 
@@ -166,7 +132,9 @@ export async function POST(request: NextRequest) {
       result =
         JSON.parse(text);
 
-    } catch {
+    }
+
+    catch {
 
       result =
         text;
@@ -176,57 +144,28 @@ export async function POST(request: NextRequest) {
 
 
 
-    if (!response.ok) {
-
-
-      return NextResponse.json(
-
-        {
-
-          success:
-            false,
-
-
-          message:
-            "AlfaStore API error",
-
-
-          status:
-            response.status,
-
-
-          response:
-            result,
-
-        },
-
-        {
-
-          status:
-            response.status,
-
-        }
-
-      );
-
-    }
-
-
-
-
     return NextResponse.json(
 
       {
 
         success:
-          true,
+          response.ok,
 
 
-        contentType,
+        status:
+          response.status,
 
 
         data:
-          result,
+          result
+
+      },
+
+
+      {
+
+        status:
+          response.status
 
       }
 
@@ -234,11 +173,14 @@ export async function POST(request: NextRequest) {
 
 
 
-  } catch (error) {
+
+  }
+
+  catch(error){
 
 
     console.error(
-      "SAVE PER ITEM ERROR:",
+      "SAVE PER ITEM ERROR",
       error
     );
 
@@ -248,8 +190,7 @@ export async function POST(request: NextRequest) {
 
       {
 
-        success:
-          false,
+        success:false,
 
 
         message:
@@ -257,15 +198,14 @@ export async function POST(request: NextRequest) {
 
 
         error:
-          String(error),
+          String(error)
 
       },
 
 
       {
 
-        status:
-          500,
+        status:500
 
       }
 

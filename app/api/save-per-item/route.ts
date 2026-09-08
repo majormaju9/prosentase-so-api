@@ -14,15 +14,32 @@ export async function POST(request: Request) {
   if (!body || typeof body !== 'object' || Array.isArray(body) || !Object.keys(body).length) {
     return reply({ success: false, message: 'Body wajib berupa objek JSON yang tidak kosong.' }, 400);
   }
-  const apiKey = process.env.ALFASTORE_API_KEY;
-  if (!apiKey) return reply({ success: false, message: 'ALFASTORE_API_KEY belum diatur di server.' }, 500);
-  const store = process.env.ALFASTORE_STORE_ID || 'M604';
-  // The credentials belong to this store. Do not silently submit another store.
+  // Store-Id follows the form body, without a fixed store fallback.
+  const stores: string[] = [];
   for (const key of ['storeId', 'kodeToko']) {
-    if (body[key] !== undefined && String(body[key]).trim().toUpperCase() !== store.toUpperCase()) {
-      return reply({ success: false, message: 'Toko pada data berbeda dengan Store-Id server.' }, 400);
+    if (body[key] === undefined) continue;
+    if (typeof body[key] !== 'string') {
+      return reply({ success: false, message: key + ' harus berupa teks kode toko.' }, 400);
     }
+    const value = body[key].trim().toUpperCase();
+    if (!/^[A-Z0-9]{1,30}$/.test(value)) {
+      return reply({ success: false, message: 'Isi kode toko dengan huruf dan angka (maksimal 30 karakter).' }, 400);
+    }
+    stores.push(value);
   }
+  if (!stores.length) {
+    return reply({ success: false, message: 'Kode toko wajib diisi pada form (storeId atau kodeToko).' }, 400);
+  }
+  if (stores.some(value => value !== stores[0])) {
+    return reply({ success: false, message: 'storeId dan kodeToko berbeda. Muat ulang barang sesuai form toko.' }, 400);
+  }
+  const store = stores[0];
+  // Normalize only existing fields; leave all product fields and QTY intact.
+  for (const key of ['storeId', 'kodeToko']) {
+    if (body[key] !== undefined) body[key] = store;
+  }
+  const apiKey = process.env.ALFA_API_KEY || process.env.ALFASTORE_API_KEY;
+  if (!apiKey) return reply({ success: false, message: 'ALFA_API_KEY belum diatur di server.' }, 500);
   const headers: Record<string, string> = {
     'App-Name': 'SO-PDA',
     'Version-App': process.env.ALFASTORE_VERSION_APP || 'V.2026.04.13.01-alfa',
@@ -32,12 +49,13 @@ export async function POST(request: Request) {
     'Api-Key': apiKey,
     'User-Id': process.env.ALFASTORE_USER_ID || '23067884',
     'Store-Id': store,
-    'Branch-Id': process.env.ALFASTORE_BRANCH_ID || 'MZ01',
+    'Branch-Id': process.env.ALFA_BRANCH_ID || process.env.ALFASTORE_BRANCH_ID || 'MZ01',
     AndroidId: process.env.ALFASTORE_ANDROID_ID || '56cb5d6cc7274364',
     'Mac-Addr': process.env.ALFASTORE_MAC_ADDR || '56cb5d6cc7274364',
     'Content-Type': 'application/json', Accept: 'application/json',
   };
-  if (process.env.ALFASTORE_APP_UID) headers['App-Uid'] = process.env.ALFASTORE_APP_UID;
+  const appUid = process.env.ALFA_APP_UID || process.env.ALFASTORE_APP_UID;
+  if (appUid) headers['App-Uid'] = appUid;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 35000);
   try {

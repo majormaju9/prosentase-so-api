@@ -5,215 +5,168 @@ const ALFASTORE_URL =
   "https://app.alfastore.co.id/prd/api/so/entry_kkso/save_per_item";
 
 
+
+export async function GET() {
+
+  return NextResponse.json({
+    success:true,
+    message:"API save_per_item aktif. Gunakan POST."
+  });
+
+}
+
+
+
 export async function POST(request: NextRequest) {
 
   try {
 
-    const { searchParams } =
-      new URL(request.url);
+
+    const body = await request.json();
 
 
-    const storeId =
-      searchParams.get("storeId");
-
-    const date =
-      searchParams.get("date");
-
-
-    if (!storeId || !date) {
+    if(!body.kodeToko || !body.dateSo || !body.data){
 
       return NextResponse.json(
         {
-          success: false,
+          success:false,
           message:
-            "storeId dan date wajib diisi",
+          "kodeToko, dateSo dan data wajib ada"
         },
         {
-          status: 400,
+          status:400
         }
       );
 
     }
 
 
-    const apiUrl =
-      `${ALFASTORE_URL}` +
-      `?storeId=${encodeURIComponent(storeId)}` +
-      `&date=${encodeURIComponent(date)}`;
+
+    const response = await fetch(
+      ALFASTORE_URL,
+      {
+
+        method:"POST",
 
 
-
-    // ambil body JSON dari frontend
-    const body =
-      await request.json();
-
-
-
-    const response =
-      await fetch(apiUrl, {
-
-        method: "POST",
-
-
-        headers: {
+        headers:{
 
           "App-Name":
-            "SO-PDA",
+          "SO-PDA",
 
           "Version-App":
-            "V.2026.04.13.01-alfa",
+          "V.2026.04.13.01-alfa",
 
           "Version-Code":
-            "28",
-
-          "User-Agent":
-            "Dalvik/2.1.0 (Linux; U; Android 11; PM75 Build/RKQ1.210518.002)",
+          "28",
 
 
           "Platform":
-            "ANDROID",
+          "ANDROID",
+
+
+          "Mac-Addr":
+          "712f8db18eeb1816",
 
 
           "Api-Key":
-            "ivOZx9MLmkrj1L8R23uFlaryMR1VGMXG",
+          "ivOZx9MLmkrj1L8R23uFlaryMR1VGMXG",
+
+
+          "User-Agent":
+          "Dalvik/2.1.0 (Linux; U; Android 11; PM75 Build/RKQ1.210518.002)",
 
 
           "Accept-Encoding":
-            "gzip",
+          "gzip",
 
 
           "Connection":
-            "Keep-Alive",
-
-
-          "Host":
-            "app.alfastore.co.id",
+          "Keep-Alive",
 
 
           "Content-Type":
-            "application/json",
+          "application/json; charset=utf-8"
 
         },
 
 
         body:
-          JSON.stringify(body),
+        JSON.stringify(body),
 
 
         cache:
-          "no-store",
+        "no-store"
 
-      });
-
-
-
-    const contentType =
-      response.headers.get("content-type") || "";
-
-
-    const resultText =
-      await response.text();
+      }
+    );
 
 
 
-    if (!response.ok) {
-
-      return NextResponse.json(
-        {
-
-          success:
-            false,
-
-          message:
-            "AlfaStore API error",
-
-
-          status:
-            response.status,
-
-
-          response:
-            resultText,
-
-        },
-
-        {
-          status:
-            response.status,
-        }
-
-      );
-
-    }
+    const text =
+    await response.text();
 
 
 
     let result;
 
 
-    try {
+    try{
 
       result =
-        JSON.parse(resultText);
+      JSON.parse(text);
 
-    } catch {
+    }
+    catch{
 
-      result =
-        resultText;
+      result=text;
 
     }
 
 
 
-    return NextResponse.json({
-
-      success:
-        true,
-
-
-      contentType,
-
-
-      data:
-        result,
-
-    });
-
-
-
-  } catch(error) {
-
-
-    console.error(
-      "SAVE PER ITEM ERROR:",
-      error
-    );
-
-
-
     return NextResponse.json(
+
       {
-
         success:
-          false,
+        response.ok,
 
+        status:
+        response.status,
 
-        message:
-          "Internal server error",
-
-
-        error:
-          String(error),
+        data:
+        result
 
       },
 
       {
         status:
-          500,
+        response.status
       }
 
     );
 
+
+
   }
+  catch(error){
+
+
+    return NextResponse.json(
+
+      {
+        success:false,
+        message:String(error)
+      },
+
+      {
+        status:500
+      }
+
+    );
+
+
+  }
+
 
 }

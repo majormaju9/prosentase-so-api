@@ -5,6 +5,8 @@ export const dynamic = "force-dynamic";
 
 const ALFASTORE_URL =
   "https://app.alfastore.co.id/prd/api/so/entry_kkso/save_per_item";
+const ALFASTORE_ENTRY_URL =
+  "https://app.alfastore.co.id/prd/api/so/entry_kkso";
 
 function parseJsonValue(value: unknown): unknown {
   let result = value;
@@ -185,6 +187,26 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (!rakSo) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "rakSo wajib ada untuk menyimpan per item."
+        },
+        { status: 400 }
+      );
+    }
+
+    if (data.length !== 1) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "save_per_item hanya menerima tepat satu barang."
+        },
+        { status: 400 }
+      );
+    }
+
     const payload = {
       kodeToko,
       dateSo: normalizeDate(dateSoRaw),
@@ -216,27 +238,64 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const upstreamResponse = await fetch(ALFASTORE_URL, {
-      method: "POST",
-      headers: {
-        "App-Name": "SO-PDA",
-        "Version-App": "V.2026.04.13.01-alfa",
-        "Version-Code": "28",
-        Platform: "ANDROID",
-        "Mac-Addr": "712f8db18eeb1816",
-        "Api-Key": apiKey,
-        "User-Agent":
-          "Dalvik/2.1.0 (Linux; U; Android 11; PM75 Build/RKQ1.210518.002)",
-        Accept: "application/json",
-        "Accept-Encoding": "gzip",
-        Connection: "Keep-Alive",
-        "Content-Type": "application/json; charset=utf-8"
-      },
-      body: JSON.stringify(payload),
-      cache: "no-store"
-    });
+    // Header identitas harus sama untuk membuka entry rak dan menyimpan item.
+    // Server Alfastore mengikat lock rak pada identitas perangkat ini.
+    const deviceHeaders = {
+      "App-Name": "SO-PDA",
+      "Version-App": "V.2026.04.13.01-alfa",
+      "Version-Code": "28",
+      Platform: "ANDROID",
+      "Mac-Addr": process.env.ALFASTORE_MAC_ADDR ?? "712f8db18eeb1816",
+      "Api-Key": apiKey,
+      "User-Agent":
+        "Dalvik/2.1.0 (Linux; U; Android 11; PM75 Build/RKQ1.210518.002)",
+      Accept: "application/json",
+      "Accept-Encoding": "gzip",
+      Connection: "Keep-Alive"
+    };
 
-    const responseText = await upstreamResponse.text();
+    const saveItem = () =>
+      fetch(ALFASTORE_URL, {
+        method: "POST",
+        headers: {
+          ...deviceHeaders,
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        body: JSON.stringify(payload),
+        cache: "no-store"
+      });
+
+    let upstreamResponse = await saveItem();
+    let responseText = await upstreamResponse.text();
+    let lockRefreshed = false;
+
+    // 406 ini tidak berarti format JSON salah. Pesan tersebut berarti lock rak
+    // dimiliki sesi/perangkat lain atau belum dibuat. Buka kembali entry rak
+    // dengan identitas yang sama, kemudian retry tepat satu kali. POST pertama
+    // ditolak sehingga retry ini tidak menggandakan QTY.
+    if (
+      upstreamResponse.status === 406 &&
+      /rak[\s\S]*(tidak\s*)?terkunci|mengunci\s*rak/i.test(responseText)
+    ) {
+      const entryUrl = new URL(ALFASTORE_ENTRY_URL);
+      entryUrl.searchParams.set("kodeToko", kodeToko);
+      entryUrl.searchParams.set("dateSo", payload.dateSo);
+      entryUrl.searchParams.set("rakSo", rakSo);
+
+      const lockResponse = await fetch(entryUrl, {
+        method: "GET",
+        headers: deviceHeaders,
+        cache: "no-store"
+      });
+
+      // Hanya retry bila server menerima proses entry/lock rak.
+      if (lockResponse.ok) {
+        await lockResponse.arrayBuffer();
+        lockRefreshed = true;
+        upstreamResponse = await saveItem();
+        responseText = await upstreamResponse.text();
+      }
+    }
 
     let upstreamData: unknown = responseText;
 
@@ -255,9 +314,10 @@ export async function POST(request: NextRequest) {
         success: upstreamResponse.ok,
         status: upstreamResponse.status,
         message: upstreamResponse.ok
-          ? "QTY barang berhasil dikirim ke server."
+          ? "QTY barang berhasil disimpan per item."
           : "Server Alfastore menolak penyimpanan barang.",
-        data: upstreamData
+        data: upstreamData,
+        lockRefreshed
       },
       {
         status: upstreamResponse.status,

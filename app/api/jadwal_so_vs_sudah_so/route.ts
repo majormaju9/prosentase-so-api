@@ -5,174 +5,339 @@ const ALFASTORE_URL =
 
 
 export async function GET(request: NextRequest) {
+
   try {
 
-    const { searchParams } = new URL(request.url);
+    const { searchParams } =
+      new URL(request.url);
 
-    const storeId = searchParams.get("storeId");
-    const dateSo = searchParams.get("dateSo");
+
+    const storeId =
+      searchParams.get("storeId");
+
+    const dateSo =
+      searchParams.get("dateSo");
 
 
     if (!storeId || !dateSo) {
-      return NextResponse.json(
+
+      return new NextResponse(
+        "storeId dan dateSo wajib diisi",
         {
-          success: false,
-          message: "storeId dan dateSo wajib diisi",
-        },
-        {
-          status: 400,
+          status:400
         }
       );
+
     }
+
 
 
     const apiUrl =
       `${ALFASTORE_URL}` +
-      `?storeId=${encodeURIComponent(storeId)}` +
-      `&dateSo=${encodeURIComponent(dateSo)}`;
+      `?storeId=${storeId}` +
+      `&dateSo=${dateSo}`;
 
 
-    const response = await fetch(apiUrl, {
 
-      method: "GET",
+    const response =
+      await fetch(apiUrl, {
 
-      headers: {
+        method:"GET",
 
-        "App-Name": "SO-PDA",
+        headers:{
 
-        "Version-App":
+          "App-Name":"SO-PDA",
+
+          "Version-App":
           "V.2026.04.13.01-alfa",
 
-        "Version-Code":
-          "28",
+          "Version-Code":"28",
 
-        "User-Agent":
+          "User-Agent":
           "Dalvik/2.1.0 (Linux; U; Android 11; PM75 Build/RKQ1.210518.002)",
 
-        "Platform":
-          "ANDROID",
+          "Platform":"ANDROID",
 
-        "Api-Key":
+          "Api-Key":
           "ivOZx9MLmkrj1L8R23uFlaryMR1VGMXG",
 
-        "Accept-Encoding":
-          "gzip",
+          "Accept-Encoding":"gzip",
 
-        "Connection":
-          "Keep-Alive",
+          "Connection":"Keep-Alive",
 
-        "Host":
-          "app.alfastore.co.id",
-
-      },
-
-      cache:
-        "no-store",
-
-    });
-
-
-    const contentType =
-      response.headers.get("content-type") || "";
-
-
-    const text =
-      await response.text();
-
-
-
-    if (!response.ok) {
-
-      return NextResponse.json(
-
-        {
-          success: false,
-
-          message:
-            "AlfaStore API error",
-
-          status:
-            response.status,
-
-          response:
-            text,
-        },
-
-        {
-          status:
-            response.status,
         }
 
-      );
+      });
+
+
+
+    const data =
+      await response.json();
+
+
+
+    /*
+      menyesuaikan jika API memakai
+      data / result / items
+    */
+
+    const rows =
+      data.data ||
+      data.result ||
+      data.items ||
+      [];
+
+
+
+
+    let tableRows = "";
+
+
+
+    if(Array.isArray(rows)) {
+
+
+      tableRows =
+      rows.map((item:any,index:number)=>`
+
+      <tr>
+
+        <td>${index+1}</td>
+
+        <td>${item.storeId ?? storeId}</td>
+
+        <td>${item.dateSo ?? dateSo}</td>
+
+        <td>${item.kodeBarang ?? item.productCode ?? "-"}</td>
+
+        <td>${item.namaBarang ?? item.productName ?? "-"}</td>
+
+        <td>${item.qtyJadwal ?? item.qty ?? 0}</td>
+
+        <td>${item.qtySudahSo ?? item.qtySo ?? 0}</td>
+
+        <td>
+        ${
+          (item.qtySudahSo ?? 0) > 0
+          ? "Sudah SO"
+          : "Belum SO"
+        }
+        </td>
+
+      </tr>
+
+      `).join("");
 
     }
 
 
 
-    let result;
+    const html = `
+
+<!DOCTYPE html>
+
+<html>
+
+<head>
+
+<title>
+Laporan SO VS Sudah SO
+</title>
 
 
-    try {
+<style>
 
-      result =
-        JSON.parse(text);
+body{
 
-    } catch {
+font-family:
+Arial, sans-serif;
 
-      result =
-        text;
+padding:20px;
 
-    }
-
+}
 
 
-    return NextResponse.json({
+h2{
 
-      success:
-        true,
+text-align:center;
 
-      contentType,
-
-      data:
-        result,
-
-    });
+}
 
 
 
-  } catch (error) {
+table{
+
+width:100%;
+
+border-collapse:collapse;
+
+font-size:14px;
+
+}
 
 
-    console.error(
-      "JADWAL SO VS SUDAH SO ERROR:",
-      error
+
+th{
+
+background:#1976d2;
+
+color:white;
+
+padding:10px;
+
+}
+
+
+
+td{
+
+border:1px solid #ddd;
+
+padding:8px;
+
+text-align:center;
+
+}
+
+
+
+tr:nth-child(even){
+
+background:#f5f5f5;
+
+}
+
+
+
+.info{
+
+margin-bottom:20px;
+
+}
+
+</style>
+
+
+</head>
+
+
+
+<body>
+
+
+<h2>
+Laporan Jadwal SO VS Sudah SO
+</h2>
+
+
+<div class="info">
+
+<b>Store:</b> ${storeId}
+
+<br>
+
+<b>Tanggal SO:</b> ${dateSo}
+
+</div>
+
+
+
+<table>
+
+
+<thead>
+
+<tr>
+
+<th>No</th>
+
+<th>Store</th>
+
+<th>Tanggal</th>
+
+<th>Kode Barang</th>
+
+<th>Nama Barang</th>
+
+<th>Qty Jadwal</th>
+
+<th>Qty Sudah SO</th>
+
+<th>Status</th>
+
+
+</tr>
+
+</thead>
+
+
+
+<tbody>
+
+${tableRows || 
+
+`
+<tr>
+<td colspan="8">
+Data tidak ditemukan
+</td>
+</tr>
+`
+
+}
+
+</tbody>
+
+
+
+</table>
+
+
+</body>
+
+</html>
+
+
+`;
+
+
+
+    return new NextResponse(
+      html,
+      {
+        headers:{
+          "Content-Type":
+          "text/html"
+        }
+      }
     );
 
+
+
+
+  } catch(error){
 
 
     return NextResponse.json(
 
       {
-        success:
-          false,
+
+        success:false,
 
         message:
-          "Gagal mengambil laporan jadwal SO vs sudah SO",
-
-        error:
-          error instanceof Error
-            ? error.message
-            : String(error),
+        error instanceof Error
+        ? error.message
+        : String(error)
 
       },
 
       {
-        status:
-          500,
+        status:500
       }
 
     );
 
 
   }
+
 }

@@ -10,11 +10,13 @@ export async function GET(request: NextRequest) {
 try {
 
 
-const {searchParams}=new URL(request.url);
+const {searchParams} =
+new URL(request.url);
 
 
 const storeId =
 searchParams.get("storeId");
+
 
 const dateSo =
 searchParams.get("dateSo");
@@ -23,23 +25,19 @@ searchParams.get("dateSo");
 
 if(!storeId || !dateSo){
 
-return NextResponse.json({
-
-success:false,
-
-message:"storeId dan dateSo wajib diisi"
-
-},{
+return new NextResponse(
+"storeId dan dateSo wajib diisi",
+{
 status:400
-});
+}
+);
 
 }
 
 
 
-
 const apiUrl =
-`${ALFASTORE_URL}?storeId=${storeId}&dateSo=${dateSo}`;
+`${ALFASTORE_URL}?storeId=${encodeURIComponent(storeId)}&dateSo=${encodeURIComponent(dateSo)}`;
 
 
 
@@ -48,21 +46,17 @@ await fetch(apiUrl,{
 
 method:"GET",
 
-
 headers:{
 
 
 "App-Name":
 "SO-PDA",
 
-
 "Version-App":
 "V.2026.04.13.01-alfa",
 
-
 "Version-Code":
 "28",
-
 
 "User-Agent":
 "Dalvik/2.1.0 (Linux; U; Android 11; PM75 Build/RKQ1.210518.002)",
@@ -77,74 +71,87 @@ headers:{
 
 
 "Accept":
-"*/*",
-
+"text/html",
 
 "Connection":
 "Keep-Alive"
 
+
 },
 
 
-cache:"no-store"
+cache:
+"no-store"
 
 
 });
 
 
 
-const contentType =
-response.headers.get("content-type");
-
-
-
-const text =
+const html =
 await response.text();
 
 
 
-return NextResponse.json({
 
-
-success:true,
-
+return new NextResponse(
+html,
+{
 
 status:
 response.status,
 
 
-contentType,
+headers:{
+
+"Content-Type":
+"text/html; charset=utf-8",
 
 
-preview:
-text.substring(0,1000),
-
-
-raw:text
-
-
-});
-
-
-
-}catch(error){
-
-
-return NextResponse.json({
-
-success:false,
-
-message:
-error instanceof Error
-? error.message
-:String(error)
-
-},{
-status:500
-});
-
+"Cache-Control":
+"no-store"
 
 }
 
+}
+
+);
+
+
+
+}
+catch(error){
+
+
+return new NextResponse(
+
+`
+<html>
+<body>
+
+<h3>Error</h3>
+
+<p>
+${error instanceof Error
+? error.message
+: String(error)}
+</p>
+
+</body>
+</html>
+`
+
+,
+{
+status:500,
+headers:{
+"Content-Type":"text/html"
+}
+}
+
+);
+
+
+}
 
 }

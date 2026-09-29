@@ -6,35 +6,114 @@ export const dynamic = "force-dynamic";
 const TARGET_URL =
   "https://app.alfastore.co.id/prd/api/so/entry_kkso/save_per_item";
 
+// ==========================================
+// GET
+// Agar URL tidak error saat dibuka di browser
+// ==========================================
+export async function GET(req: NextRequest) {
+  const { searchParams } = new URL(req.url);
+
+  const storeId =
+    searchParams.get("storeId") ||
+    searchParams.get("kodeToko") ||
+    "";
+
+  const date =
+    searchParams.get("date") ||
+    searchParams.get("dateSo") ||
+    "";
+
+  return NextResponse.json(
+    {
+      success: true,
+      api: "save-per-item",
+      message: "API aktif. Gunakan POST untuk menyimpan item.",
+      storeId,
+      date,
+      method: "POST",
+      endpoint: "/api/save-per-item",
+      exampleBody: {
+        kodeToko: storeId || "M604",
+        dateSo: date || "29-09-2026",
+        rakSo: "HB3",
+        data: [
+          {
+            plu: 460947,
+            descp: "DELFI DAIRY MILK BOGOF 2X25G",
+            conv1: 0,
+            conv2: 0,
+            subdept: 0,
+            barcode: "899100166346",
+            tag: "N",
+            qty: "1",
+            avg_cost: 6354.81,
+          },
+        ],
+      },
+    },
+    {
+      status: 200,
+      headers: {
+        "Cache-Control": "no-store",
+      },
+    }
+  );
+}
+
+// ==========================================
+// POST SAVE PER ITEM
+// ==========================================
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
 
-    // =========================
+    const kodeToko = String(
+      body.kodeToko ||
+      body.storeId ||
+      ""
+    )
+      .trim()
+      .toUpperCase();
+
+    const dateSo = String(
+      body.dateSo ||
+      body.date ||
+      ""
+    ).trim();
+
+    const rakSo = String(
+      body.rakSo ||
+      body.rak ||
+      ""
+    )
+      .trim()
+      .toUpperCase();
+
+    // ======================================
     // VALIDASI
-    // =========================
+    // ======================================
 
-    if (!body.kodeToko) {
+    if (!kodeToko) {
       return NextResponse.json(
         {
           success: false,
-          message: "kodeToko wajib diisi",
+          message: "kodeToko/storeId wajib diisi",
         },
         { status: 400 }
       );
     }
 
-    if (!body.dateSo) {
+    if (!dateSo) {
       return NextResponse.json(
         {
           success: false,
-          message: "dateSo wajib diisi",
+          message: "dateSo/date wajib diisi",
         },
         { status: 400 }
       );
     }
 
-    if (!body.rakSo) {
+    if (!rakSo) {
       return NextResponse.json(
         {
           success: false,
@@ -44,7 +123,17 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (!Array.isArray(body.data) || body.data.length === 0) {
+    if (!Array.isArray(body.data)) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "data harus berupa array",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (body.data.length === 0) {
       return NextResponse.json(
         {
           success: false,
@@ -54,17 +143,17 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // =========================
-    // BODY API ALFASTORE
-    // =========================
+    // ======================================
+    // PAYLOAD
+    // ======================================
 
     const payload = {
-      kodeToko: String(body.kodeToko).trim().toUpperCase(),
-      dateSo: String(body.dateSo),
-      rakSo: String(body.rakSo).trim().toUpperCase(),
+      kodeToko,
+      dateSo,
+      rakSo,
 
       data: body.data.map((item: any) => ({
-        plu: Number(item.plu),
+        plu: Number(item.plu ?? 0),
         descp: String(item.descp ?? ""),
         conv1: Number(item.conv1 ?? 0),
         conv2: Number(item.conv2 ?? 0),
@@ -76,59 +165,75 @@ export async function POST(req: NextRequest) {
       })),
     };
 
-    // =========================
-    // REQUEST KE ALFASTORE
-    // =========================
+    console.log("SAVE PER ITEM PAYLOAD:", payload);
 
-    const response = await fetch(TARGET_URL, {
+    // ======================================
+    // REQUEST ALFASTORE
+    // ======================================
+
+    const upstream = await fetch(TARGET_URL, {
       method: "POST",
 
       headers: {
         "User-Agent":
           "Dalvik/2.1.0 (Linux; U; Android 15; Infinix X6885 Build/AP3A.240905.015.A2)",
 
-        "Version-App": "V.2026.04.13.01-alfa",
+        "Version-App":
+          "V.2026.04.13.01-alfa",
 
-        "Version-Code": "28",
+        "Version-Code":
+          "28",
 
-        "App-Uid": "",
+        "App-Uid":
+          "",
 
-        "User-Id": "23067884",
+        "User-Id":
+          "23067884",
 
-        // mengikuti kode toko yang dikirim
-        "Store-Id": String(body.kodeToko)
-          .trim()
-          .toUpperCase(),
+        "Store-Id":
+          kodeToko,
 
-        "Store-Id-Ext": "",
+        "Store-Id-Ext":
+          "",
 
-        "Shard-Id": "",
+        "Shard-Id":
+          "",
 
-        "Ip-Addr": "10.1.10.1",
+        "Ip-Addr":
+          "10.1.10.1",
 
-        Sn: "",
+        "Sn":
+          "",
 
         "Api-Key":
           "iVOZX9MLmKrj1L8R23uF1aryMR1vGMXG",
 
-        Androidid: "712f8db18eeb1816",
+        "Androidid":
+          "712f8db18eeb1816",
 
-        "Branch-Id": "MZ01",
+        "Branch-Id":
+          "MZ01",
 
-        "Class-Store": "",
+        "Class-Store":
+          "",
 
-        "Company-Id": "",
+        "Company-Id":
+          "",
 
-        "Company-Ext": "",
+        "Company-Ext":
+          "",
 
-        Platform: "ANDROID",
+        "Platform":
+          "ANDROID",
 
-        "Mac-Addr": "712f8db18eeb1816",
+        "Mac-Addr":
+          "712f8db18eeb1816",
 
         "Content-Type":
           "application/json; charset=utf-8",
 
-        Accept: "application/json",
+        "Accept":
+          "application/json",
       },
 
       body: JSON.stringify(payload),
@@ -136,77 +241,69 @@ export async function POST(req: NextRequest) {
       cache: "no-store",
     });
 
-    // =========================
-    // BACA RESPONSE
-    // =========================
+    // ======================================
+    // RESPONSE UPSTREAM
+    // ======================================
 
-    const responseText = await response.text();
+    const raw = await upstream.text();
 
-    let responseData: any;
+    let data: any = null;
 
     try {
-      responseData = JSON.parse(responseText);
+      data = JSON.parse(raw);
     } catch {
-      responseData = {
-        raw: responseText,
+      data = {
+        raw,
       };
     }
 
-    // =========================
-    // JIKA API ERROR
-    // =========================
+    console.log(
+      "SAVE PER ITEM RESPONSE:",
+      upstream.status,
+      data
+    );
 
-    if (!response.ok) {
-      console.error(
-        "ALFASTORE ERROR:",
-        response.status,
-        responseData
-      );
-
+    // Jangan teruskan status error mentah ke browser.
+    // Supaya frontend tetap bisa membaca JSON.
+    if (!upstream.ok) {
       return NextResponse.json(
         {
           success: false,
-          status: response.status,
-          message: "Gagal simpan Entry KKSO",
-          response: responseData,
+          upstreamStatus: upstream.status,
+          message: "Alfastore menolak request save per item",
+          response: data,
         },
         {
-          status: response.status,
+          status: 200,
         }
       );
     }
 
-    // =========================
-    // BERHASIL
-    // 201 CREATED JUGA SUKSES
-    // =========================
-
     return NextResponse.json(
       {
         success: true,
-        status: response.status,
-        ...responseData,
+        upstreamStatus: upstream.status,
+        response: data,
       },
       {
-        status: response.status,
+        status: 200,
       }
     );
   } catch (error: any) {
-    console.error(
-      "SAVE PER ITEM ERROR:",
-      error
-    );
+    console.error("SAVE PER ITEM ERROR:", error);
 
     return NextResponse.json(
       {
         success: false,
-        message: "Terjadi kesalahan saat save per item",
+        message: "Gagal melakukan save per item",
         error:
           error?.message ||
           String(error),
       },
       {
-        status: 500,
+        // Dibuat 200 agar browser/frontend
+        // tetap mendapatkan JSON error
+        status: 200,
       }
     );
   }

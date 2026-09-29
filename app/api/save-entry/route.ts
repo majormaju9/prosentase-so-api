@@ -6,228 +6,121 @@ export const dynamic = "force-dynamic";
 const TARGET_URL =
   "https://app.alfastore.co.id/prd/api/so/entry_kkso/save_entry_kkso";
 
-const API_KEY =
-  "iVOZX9MLmKrj1L8R23uF1aryMR1vGMXG";
-
-function headers(storeId: string) {
+// =============================================
+// HEADER ALFASTORE
+// =============================================
+function getHeaders(storeId: string) {
   return {
     Accept: "application/json",
+
     "App-Name": "SO-PDA",
 
     "User-Agent":
       "Dalvik/2.1.0 (Linux; U; Android 15; Infinix X6885 Build/AP3A.240905.015.A2)",
 
     "Version-App": "V.2026.04.13.01-alfa",
+
     "Version-Code": "28",
 
     "App-Uid": "",
+
     "User-Id": "23067884",
 
     "Store-Id": storeId,
+
     "Store-Id-Ext": "",
+
     "Shard-Id": "",
 
     "Ip-Addr": "10.1.10.1",
+
     Sn: "",
 
-    "Api-Key": API_KEY,
+    "Api-Key":
+      "iVOZX9MLmKrj1L8R23uF1aryMR1vGMXG",
 
-    AndroidId: "712f8db18eeb1816",
+    AndroidId:
+      "712f8db18eeb1816",
 
-    "Branch-Id": "MZ01",
+    "Branch-Id":
+      "MZ01",
+
     "Class-Store": "",
 
     "Company-Id": "",
+
     "Company-Ext": "",
 
-    Platform: "ANDROID",
+    Platform:
+      "ANDROID",
 
-    "Mac-Addr": "712f8db18eeb1816",
+    "Mac-Addr":
+      "712f8db18eeb1816",
 
     "Content-Type":
       "application/json; charset=utf-8",
   };
 }
 
-function pick(
-  obj: any,
-  names: string[],
-  fallback: any = undefined
-) {
-  for (const name of names) {
-    if (
-      obj?.[name] !== undefined &&
-      obj?.[name] !== null
-    ) {
-      return obj[name];
-    }
-  }
+// =============================================
+// POST
+// =============================================
+export async function POST(req: NextRequest) {
+  const started = Date.now();
 
-  // coba case-insensitive
-  const keys = Object.keys(obj || {});
-
-  for (const wanted of names) {
-    const found = keys.find(
-      (k) =>
-        k.toLowerCase() ===
-        wanted.toLowerCase()
-    );
-
-    if (
-      found &&
-      obj[found] !== undefined &&
-      obj[found] !== null
-    ) {
-      return obj[found];
-    }
-  }
-
-  return fallback;
-}
-
-function normalizeItem(item: any) {
-  return {
-    plu: Number(
-      pick(item, [
-        "plu",
-        "PLU",
-        "kodePlu",
-        "kode_plu",
-      ])
-    ),
-
-    descp: String(
-      pick(
-        item,
-        [
-          "descp",
-          "DESCp",
-          "description",
-          "desc",
-          "nama",
-          "namaBarang",
-          "nama_barang",
-        ],
-        ""
-      )
-    ).trim(),
-
-    conv1: Number(
-      pick(
-        item,
-        ["conv1", "CONV1"],
-        0
-      )
-    ),
-
-    conv2: Number(
-      pick(
-        item,
-        ["conv2", "CONV2"],
-        0
-      )
-    ),
-
-    subdept: Number(
-      pick(
-        item,
-        [
-          "subdept",
-          "subDept",
-          "SUBDEPT",
-          "sub_department",
-        ],
-        0
-      )
-    ),
-
-    barcode: String(
-      pick(
-        item,
-        [
-          "barcode",
-          "barCode",
-          "BARCODE",
-          "ean",
-        ],
-        ""
-      )
-    ).trim(),
-
-    tag: String(
-      pick(
-        item,
-        [
-          "tag",
-          "TAG",
-          "flag",
-          "tipe",
-        ],
-        ""
-      )
-    ).trim(),
-
-    qty: String(
-      pick(
-        item,
-        [
-          "qty",
-          "QTY",
-          "jumlah",
-          "quantity",
-        ],
-        ""
-      )
-    ),
-
-    avg_cost: Number(
-      pick(
-        item,
-        [
-          "avg_cost",
-          "avgCost",
-          "AVG_COST",
-          "avgcost",
-          "cost",
-        ]
-      )
-    ),
-  };
-}
-
-export async function POST(
-  req: NextRequest
-) {
   try {
-    const body = await req.json();
+    // =========================================
+    // BACA BODY
+    // =========================================
+    let body: any;
 
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "Body JSON tidak valid",
+        },
+        {
+          status: 200,
+        }
+      );
+    }
+
+    // =========================================
+    // PARAMETER
+    // =========================================
     const kodeToko = String(
       body.kodeToko ??
-      body.storeId ??
-      ""
+        body.storeId ??
+        ""
     )
       .trim()
       .toUpperCase();
 
     const dateSo = String(
       body.dateSo ??
-      body.date ??
-      ""
+        body.date ??
+        ""
     ).trim();
 
     const rakSo = String(
       body.rakSo ??
-      body.rak ??
-      ""
+        body.rak ??
+        ""
     )
       .trim()
       .toUpperCase();
 
-    const sourceItems =
+    const sourceData =
       Array.isArray(body.data)
         ? body.data
         : [];
 
+    // =========================================
+    // VALIDASI
+    // =========================================
     if (!kodeToko) {
       return NextResponse.json(
         {
@@ -235,7 +128,9 @@ export async function POST(
           message:
             "kodeToko/storeId kosong",
         },
-        { status: 400 }
+        {
+          status: 200,
+        }
       );
     }
 
@@ -246,7 +141,9 @@ export async function POST(
           message:
             "dateSo/date kosong",
         },
-        { status: 400 }
+        {
+          status: 200,
+        }
       );
     }
 
@@ -254,357 +151,383 @@ export async function POST(
       return NextResponse.json(
         {
           success: false,
-          message: "rakSo kosong",
+          message:
+            "rakSo kosong",
         },
-        { status: 400 }
+        {
+          status: 200,
+        }
       );
     }
 
     if (
-      sourceItems.length === 0
+      sourceData.length === 0
     ) {
       return NextResponse.json(
         {
           success: false,
           message:
-            "Data barang kosong",
-        },
-        { status: 400 }
-      );
-    }
-
-    const items =
-      sourceItems.map(
-        normalizeItem
-      );
-
-    // ====================================
-    // CEK DATA WAJIB
-    // ====================================
-
-    const invalidItems =
-      items
-        .map((item, index) => {
-          const missing: string[] =
-            [];
-
-          if (
-            !Number.isFinite(
-              item.plu
-            ) ||
-            item.plu <= 0
-          ) {
-            missing.push("plu");
-          }
-
-          if (!item.descp) {
-            missing.push("descp");
-          }
-
-          if (!item.barcode) {
-            missing.push("barcode");
-          }
-
-          if (!item.tag) {
-            missing.push("tag");
-          }
-
-          if (item.qty === "") {
-            missing.push("qty");
-          }
-
-          if (
-            !Number.isFinite(
-              item.avg_cost
-            )
-          ) {
-            missing.push(
-              "avg_cost"
-            );
-          }
-
-          if (
-            missing.length === 0
-          ) {
-            return null;
-          }
-
-          return {
-            index,
-            plu: item.plu,
-            missing,
-            original:
-              sourceItems[index],
-          };
-        })
-        .filter(Boolean);
-
-    // Jangan kirim 62 request kalau
-    // data dasarnya ternyata tidak lengkap.
-    if (
-      invalidItems.length > 0
-    ) {
-      return NextResponse.json(
-        {
-          success: false,
-
-          message:
-            `${invalidItems.length} item memiliki data tidak lengkap.`,
-
-          kodeToko,
-          dateSo,
-          rakSo,
-
-          total:
-            items.length,
-
-          contohError:
-            invalidItems.slice(
-              0,
-              10
-            ),
-
-          hint:
-            "Pastikan frontend mengirim barcode, tag, avg_cost, descp, conv1, conv2 dan subdept dari data asli rak.",
+            "Data item kosong",
         },
         {
-          status: 422,
+          status: 200,
         }
       );
     }
 
-    // ====================================
-    // KIRIM 1 ITEM PER REQUEST
-    // ====================================
+    // =========================================
+    // NORMALISASI SELURUH ITEM
+    // =========================================
+    const data = sourceData.map(
+      (item: any) => ({
+        plu: Number(
+          item.plu ?? 0
+        ),
 
-    const berhasil: any[] = [];
-    const gagal: any[] = [];
-
-    for (
-      let i = 0;
-      i < items.length;
-      i++
-    ) {
-      const item = items[i];
-
-      const payload = {
-        kodeToko,
-        dateSo,
-        rakSo,
-
-        // SAMA SEPERTI CAPTURE
-        // APP ASLI
-        data: [item],
-      };
-
-      console.log(
-        `[${i + 1}/${items.length}]`,
-        JSON.stringify(payload)
-      );
-
-      try {
-        const upstream =
-          await fetch(
-            TARGET_URL,
-            {
-              method: "POST",
-
-              headers:
-                headers(
-                  kodeToko
-                ),
-
-              body:
-                JSON.stringify(
-                  payload
-                ),
-
-              cache:
-                "no-store",
-            }
-          );
-
-        const raw =
-          await upstream.text();
-
-        let result: any;
-
-        try {
-          result =
-            JSON.parse(raw);
-        } catch {
-          result = {
-            raw,
-          };
-        }
-
-        console.log(
-          "PLU:",
-          item.plu,
-          "STATUS:",
-          upstream.status,
-          "BODY:",
-          result
-        );
-
-        const infoMsg =
-          String(
-            result?.infoMsg ??
-            result?.message ??
+        descp: String(
+          item.descp ??
+            item.description ??
+            item.nama ??
             ""
-          );
+        ),
 
-        // Capture Anda menunjukkan
-        // HTTP 201 + infoMsg berhasil.
-        if (
-          upstream.status ===
-            201 ||
-          (
-            upstream.ok &&
-            /berhasil simpan entry kkso/i.test(
-              infoMsg
-            )
-          )
-        ) {
-          berhasil.push({
-            plu: item.plu,
-            status:
-              upstream.status,
-            response:
-              result,
-          });
-        } else {
-          gagal.push({
-            plu: item.plu,
-            status:
-              upstream.status,
+        conv1: Number(
+          item.conv1 ?? 0
+        ),
 
-            response:
-              result,
+        conv2: Number(
+          item.conv2 ?? 0
+        ),
 
-            request:
-              payload,
-          });
+        subdept: Number(
+          item.subdept ?? 0
+        ),
+
+        barcode: String(
+          item.barcode ??
+            item.barCode ??
+            ""
+        ),
+
+        tag: String(
+          item.tag ?? ""
+        ),
+
+        qty: String(
+          item.qty ??
+            item.jumlah ??
+            "0"
+        ),
+
+        avg_cost: Number(
+          item.avg_cost ??
+            item.avgCost ??
+            0
+        ),
+      })
+    );
+
+    // =========================================
+    // CEK PLU
+    // =========================================
+    const invalidPlu =
+      data.find(
+        (item) =>
+          !Number.isFinite(
+            item.plu
+          ) ||
+          item.plu <= 0
+      );
+
+    if (invalidPlu) {
+      return NextResponse.json(
+        {
+          success: false,
+
+          message:
+            "Terdapat PLU tidak valid",
+
+          item:
+            invalidPlu,
+        },
+        {
+          status: 200,
         }
-      } catch (error: any) {
-        gagal.push({
-          plu: item.plu,
+      );
+    }
 
-          status: 0,
+    // =========================================
+    // PAYLOAD
+    //
+    // PENTING:
+    // SEMUA ITEM DIKIRIM SEKALI
+    // BUKAN 62 FETCH
+    // =========================================
+    const payload = {
+      kodeToko,
+      dateSo,
+      rakSo,
+      data,
+    };
+
+    console.log(
+      "================================="
+    );
+
+    console.log(
+      "SAVE ENTRY KKSO"
+    );
+
+    console.log(
+      "STORE:",
+      kodeToko
+    );
+
+    console.log(
+      "DATE:",
+      dateSo
+    );
+
+    console.log(
+      "RAK:",
+      rakSo
+    );
+
+    console.log(
+      "TOTAL ITEM:",
+      data.length
+    );
+
+    console.log(
+      "================================="
+    );
+
+    // =========================================
+    // SATU REQUEST KE ALFASTORE
+    // =========================================
+    let upstream: Response;
+
+    try {
+      upstream =
+        await fetch(
+          TARGET_URL,
+          {
+            method: "POST",
+
+            headers:
+              getHeaders(
+                kodeToko
+              ),
+
+            body:
+              JSON.stringify(
+                payload
+              ),
+
+            cache:
+              "no-store",
+
+            // Jangan sampai route menggantung
+            // lebih lama dari caller PHP
+            signal:
+              AbortSignal.timeout(
+                20000
+              ),
+          }
+        );
+    } catch (error: any) {
+      const elapsed =
+        Date.now() -
+        started;
+
+      const isTimeout =
+        error?.name ===
+          "TimeoutError" ||
+        error?.name ===
+          "AbortError";
+
+      return NextResponse.json(
+        {
+          success: false,
+
+          message:
+            isTimeout
+              ? "Server Alfastore timeout saat Save Entry KKSO"
+              : "Gagal menghubungi server Alfastore",
+
+          timeout:
+            isTimeout,
+
+          elapsedMs:
+            elapsed,
 
           error:
             error?.message ??
             String(error),
 
-          request:
-            payload,
-        });
-      }
-
-      // jangan bombardir upstream
-      await new Promise(
-        (resolve) =>
-          setTimeout(
-            resolve,
-            120
-          )
+          request: {
+            kodeToko,
+            dateSo,
+            rakSo,
+            totalItem:
+              data.length,
+          },
+        },
+        {
+          // Transport tetap 200 supaya PHP
+          // menerima JSON, bukan HTTP error.
+          status: 200,
+        }
       );
     }
 
-    // ====================================
-    // HASIL
-    // ====================================
+    // =========================================
+    // RESPONSE
+    // =========================================
+    const raw =
+      await upstream.text();
 
-    if (
-      gagal.length > 0
-    ) {
+    let result: any;
+
+    try {
+      result =
+        JSON.parse(raw);
+    } catch {
+      result = {
+        raw,
+      };
+    }
+
+    const elapsed =
+      Date.now() -
+      started;
+
+    console.log(
+      "UPSTREAM STATUS:",
+      upstream.status
+    );
+
+    console.log(
+      "UPSTREAM RESPONSE:",
+      result
+    );
+
+    console.log(
+      "TIME:",
+      elapsed,
+      "ms"
+    );
+
+    // =========================================
+    // DETEKSI SUKSES
+    // =========================================
+    const infoMsg =
+      String(
+        result?.infoMsg ??
+          result?.message ??
+          ""
+      );
+
+    const success =
+      upstream.ok &&
+      (
+        upstream.status ===
+          201 ||
+        /berhasil/i.test(
+          infoMsg
+        )
+      );
+
+    if (!success) {
       return NextResponse.json(
         {
           success: false,
 
           message:
-            `${berhasil.length} item berhasil, ${gagal.length} item gagal.`,
+            result?.infoMsg ??
+            result?.message ??
+            "Save Entry KKSO gagal",
 
-          kodeToko,
-          dateSo,
-          rakSo,
+          upstreamStatus:
+            upstream.status,
 
-          total:
-            items.length,
+          elapsedMs:
+            elapsed,
 
-          totalBerhasil:
-            berhasil.length,
+          request: {
+            kodeToko,
+            dateSo,
+            rakSo,
+            totalItem:
+              data.length,
+          },
 
-          totalGagal:
-            gagal.length,
-
-          // tampilkan response asli
-          // agar penyebab dapat dilihat
-          gagal:
-            gagal.slice(
-              0,
-              10
-            ),
-
-          berhasil:
-            berhasil.slice(
-              0,
-              10
-            ),
+          response:
+            result,
         },
         {
-          status: 422,
+          status: 200,
         }
       );
     }
 
+    // =========================================
+    // BERHASIL
+    // =========================================
     return NextResponse.json(
       {
         success: true,
 
         message:
+          result?.infoMsg ??
           "Berhasil Simpan Entry KKSO",
+
+        upstreamStatus:
+          upstream.status,
 
         kodeToko,
         dateSo,
         rakSo,
 
-        total:
-          items.length,
+        totalItem:
+          data.length,
 
-        totalBerhasil:
-          berhasil.length,
+        elapsedMs:
+          elapsed,
 
-        totalGagal: 0,
+        response:
+          result,
       },
       {
         status: 200,
       }
     );
   } catch (error: any) {
-    console.error(
-      "SAVE ENTRY ERROR:",
-      error
-    );
-
     return NextResponse.json(
       {
         success: false,
 
         message:
-          "Gagal memproses Save Entry KKSO",
+          "Internal error Save Entry",
 
         error:
           error?.message ??
           String(error),
+
+        elapsedMs:
+          Date.now() -
+          started,
       },
       {
-        status: 500,
+        status: 200,
       }
     );
   }
 }
 
+// =============================================
+// GET HANYA CEK ROUTE
+// =============================================
 export async function GET(
   req: NextRequest
 ) {
@@ -631,6 +554,6 @@ export async function GET(
       ) ?? "",
 
     message:
-      "Route save-entry aktif.",
+      "Route aktif. Semua item dikirim dalam satu request.",
   });
 }

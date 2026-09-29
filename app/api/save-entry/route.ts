@@ -1,44 +1,111 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const ALFASTORE_URL =
-  "https://app.alfastore.co.id/prd/api/so/entry_kkso/get_rak_tx_stEntry";
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
+const TARGET_URL =
+  "https://app.alfastore.co.id/prd/api/so/entry_kkso/save_entry_kkso";
 
-export async function GET(request: NextRequest) {
+export async function POST(req: NextRequest) {
   try {
+    const body = await req.json();
 
-    const { searchParams } = new URL(request.url);
+    // ==============================
+    // VALIDASI
+    // ==============================
+    const kodeToko = String(
+      body.kodeToko || body.storeId || ""
+    )
+      .trim()
+      .toUpperCase();
 
-    const storeId = searchParams.get("storeId");
-    const dateSo = searchParams.get("dateSo");
+    const dateSo = String(
+      body.dateSo || body.date || ""
+    ).trim();
 
+    const rakSo = String(
+      body.rakSo || ""
+    )
+      .trim()
+      .toUpperCase();
 
-    if (!storeId || !dateSo) {
+    if (!kodeToko) {
       return NextResponse.json(
         {
           success: false,
-          message: "storeId dan dateSo wajib diisi",
+          message: "kodeToko wajib diisi",
         },
-        {
-          status: 400,
-        }
+        { status: 400 }
       );
     }
 
+    if (!dateSo) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "dateSo wajib diisi",
+        },
+        { status: 400 }
+      );
+    }
 
-    const apiUrl =
-      `${ALFASTORE_URL}` +
-      `?storeId=${encodeURIComponent(storeId)}` +
-      `&dateSo=${encodeURIComponent(dateSo)}`;
+    if (!rakSo) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "rakSo wajib diisi",
+        },
+        { status: 400 }
+      );
+    }
 
+    if (!Array.isArray(body.data) || body.data.length === 0) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "data item wajib diisi",
+        },
+        { status: 400 }
+      );
+    }
 
-    const response = await fetch(apiUrl, {
+    // ==============================
+    // PAYLOAD
+    // ==============================
+    const payload = {
+      kodeToko,
+      dateSo,
+      rakSo,
 
-      method: "GET",
+      data: body.data.map((item: any) => ({
+        plu: Number(item.plu ?? 0),
+        descp: String(item.descp ?? ""),
+        conv1: Number(item.conv1 ?? 0),
+        conv2: Number(item.conv2 ?? 0),
+        subdept: Number(item.subdept ?? 0),
+        barcode: String(item.barcode ?? ""),
+        tag: String(item.tag ?? "P"),
+        qty: String(item.qty ?? "0"),
+        avg_cost: Number(item.avg_cost ?? 0),
+      })),
+    };
+
+    console.log("SAVE ENTRY KKSO REQUEST:");
+    console.log(JSON.stringify(payload));
+
+    // ==============================
+    // REQUEST KE ALFASTORE
+    // ==============================
+    const response = await fetch(TARGET_URL, {
+      method: "POST",
 
       headers: {
+        Accept: "application/json",
 
         "App-Name": "SO-PDA",
+
+        "User-Agent":
+          "Dalvik/2.1.0 (Linux; U; Android 15; Infinix X6885 Build/AP3A.240905.015.A2)",
 
         "Version-App":
           "V.2026.04.13.01-alfa",
@@ -46,121 +113,149 @@ export async function GET(request: NextRequest) {
         "Version-Code":
           "28",
 
-        "User-Agent":
-          "Dalvik/2.1.0 (Linux; U; Android 11; PM75 Build/RKQ1.210518.002)",
+        "App-Uid":
+          "",
 
-        "Platform":
-          "ANDROID",
+        "User-Id":
+          "23067884",
+
+        "Store-Id":
+          kodeToko,
+
+        "Store-Id-Ext":
+          "",
+
+        "Shard-Id":
+          "",
+
+        "Ip-Addr":
+          "10.1.10.1",
+
+        Sn:
+          "",
 
         "Api-Key":
-          "ivOZx9MLmkrj1L8R23uFlaryMR1VGMXG",
+          "iVOZX9MLmKrj1L8R23uF1aryMR1vGMXG",
 
-        "Accept-Encoding":
-          "gzip",
+        AndroidId:
+          "712f8db18eeb1816",
 
-        "Connection":
-          "Keep-Alive",
+        "Branch-Id":
+          "MZ01",
 
-        "Host":
-          "app.alfastore.co.id",
+        "Class-Store":
+          "",
 
+        "Company-Id":
+          "",
+
+        "Company-Ext":
+          "",
+
+        Platform:
+          "ANDROID",
+
+        "Mac-Addr":
+          "712f8db18eeb1816",
+
+        "Content-Type":
+          "application/json; charset=utf-8",
       },
 
-      cache:
-        "no-store",
+      body: JSON.stringify(payload),
 
+      cache: "no-store",
     });
 
+    // ==============================
+    // RESPONSE
+    // ==============================
+    const raw = await response.text();
 
-    const contentType =
-      response.headers.get("content-type") || "";
+    let data: any;
 
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      data = {
+        raw,
+      };
+    }
 
-    const text =
-      await response.text();
-
+    console.log(
+      "SAVE ENTRY KKSO RESPONSE:",
+      response.status,
+      data
+    );
 
     if (!response.ok) {
-
       return NextResponse.json(
         {
           success: false,
-
-          message:
-            "AlfaStore API error",
-
-          status:
-            response.status,
-
-          response:
-            text,
+          upstreamStatus: response.status,
+          message: "Save Entry KKSO gagal",
+          response: data,
         },
         {
-          status:
-            response.status,
+          status: 200,
         }
       );
-
     }
 
-
-    let result;
-
-    try {
-
-      result =
-        JSON.parse(text);
-
-    } catch {
-
-      result =
-        text;
-
-    }
-
-
-    return NextResponse.json({
-
-      success:
-        true,
-
-      contentType,
-
-      data:
-        result,
-
-    });
-
-
-  } catch (error) {
-
-
+    return NextResponse.json(
+      {
+        success: true,
+        upstreamStatus: response.status,
+        ...data,
+      },
+      {
+        status: 200,
+      }
+    );
+  } catch (error: any) {
     console.error(
-      "GET RAK TX ST ENTRY ERROR:",
+      "SAVE ENTRY KKSO ERROR:",
       error
     );
 
-
     return NextResponse.json(
-
       {
-        success:
-          false,
-
-        message:
-          "Internal server error",
-
+        success: false,
+        message: "Terjadi error saat save Entry KKSO",
         error:
+          error?.message ||
           String(error),
       },
-
       {
-        status:
-          500,
+        status: 200,
       }
-
     );
-
   }
+}
 
+// =================================
+// GET UNTUK CEK ROUTE
+// =================================
+export async function GET(req: NextRequest) {
+  const { searchParams } = new URL(req.url);
+
+  const storeId =
+    searchParams.get("storeId") || "";
+
+  const date =
+    searchParams.get("date") || "";
+
+  return NextResponse.json({
+    success: true,
+    api: "save-entry-kkso",
+    endpoint:
+      "/api/save-entry-kkso",
+    method: "POST",
+    storeId,
+    date,
+    target:
+      "save_entry_kkso",
+    message:
+      "API aktif. Gunakan POST untuk Save Entry KKSO.",
+  });
 }

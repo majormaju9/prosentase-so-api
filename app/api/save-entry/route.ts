@@ -6,7 +6,10 @@ export const dynamic = "force-dynamic";
 const TARGET_URL =
   "https://app.alfastore.co.id/prd/api/so/entry_kkso/save_entry_kkso";
 
-function makeHeaders(storeId: string) {
+const API_KEY =
+  "iVOZX9MLmKrj1L8R23uF1aryMR1vGMXG";
+
+function headers(storeId: string) {
   return {
     Accept: "application/json",
     "App-Name": "SO-PDA",
@@ -27,12 +30,13 @@ function makeHeaders(storeId: string) {
     "Ip-Addr": "10.1.10.1",
     Sn: "",
 
-    "Api-Key": "iVOZX9MLmKrj1L8R23uF1aryMR1vGMXG",
+    "Api-Key": API_KEY,
 
     AndroidId: "712f8db18eeb1816",
-    "Branch-Id": "MZ01",
 
+    "Branch-Id": "MZ01",
     "Class-Store": "",
+
     "Company-Id": "",
     "Company-Ext": "",
 
@@ -40,11 +44,160 @@ function makeHeaders(storeId: string) {
 
     "Mac-Addr": "712f8db18eeb1816",
 
-    "Content-Type": "application/json; charset=utf-8",
+    "Content-Type":
+      "application/json; charset=utf-8",
   };
 }
 
-export async function POST(req: NextRequest) {
+function pick(
+  obj: any,
+  names: string[],
+  fallback: any = undefined
+) {
+  for (const name of names) {
+    if (
+      obj?.[name] !== undefined &&
+      obj?.[name] !== null
+    ) {
+      return obj[name];
+    }
+  }
+
+  // coba case-insensitive
+  const keys = Object.keys(obj || {});
+
+  for (const wanted of names) {
+    const found = keys.find(
+      (k) =>
+        k.toLowerCase() ===
+        wanted.toLowerCase()
+    );
+
+    if (
+      found &&
+      obj[found] !== undefined &&
+      obj[found] !== null
+    ) {
+      return obj[found];
+    }
+  }
+
+  return fallback;
+}
+
+function normalizeItem(item: any) {
+  return {
+    plu: Number(
+      pick(item, [
+        "plu",
+        "PLU",
+        "kodePlu",
+        "kode_plu",
+      ])
+    ),
+
+    descp: String(
+      pick(
+        item,
+        [
+          "descp",
+          "DESCp",
+          "description",
+          "desc",
+          "nama",
+          "namaBarang",
+          "nama_barang",
+        ],
+        ""
+      )
+    ).trim(),
+
+    conv1: Number(
+      pick(
+        item,
+        ["conv1", "CONV1"],
+        0
+      )
+    ),
+
+    conv2: Number(
+      pick(
+        item,
+        ["conv2", "CONV2"],
+        0
+      )
+    ),
+
+    subdept: Number(
+      pick(
+        item,
+        [
+          "subdept",
+          "subDept",
+          "SUBDEPT",
+          "sub_department",
+        ],
+        0
+      )
+    ),
+
+    barcode: String(
+      pick(
+        item,
+        [
+          "barcode",
+          "barCode",
+          "BARCODE",
+          "ean",
+        ],
+        ""
+      )
+    ).trim(),
+
+    tag: String(
+      pick(
+        item,
+        [
+          "tag",
+          "TAG",
+          "flag",
+          "tipe",
+        ],
+        ""
+      )
+    ).trim(),
+
+    qty: String(
+      pick(
+        item,
+        [
+          "qty",
+          "QTY",
+          "jumlah",
+          "quantity",
+        ],
+        ""
+      )
+    ),
+
+    avg_cost: Number(
+      pick(
+        item,
+        [
+          "avg_cost",
+          "avgCost",
+          "AVG_COST",
+          "avgcost",
+          "cost",
+        ]
+      )
+    ),
+  };
+}
+
+export async function POST(
+  req: NextRequest
+) {
   try {
     const body = await req.json();
 
@@ -70,19 +223,17 @@ export async function POST(req: NextRequest) {
       .trim()
       .toUpperCase();
 
-    const items = Array.isArray(body.data)
-      ? body.data
-      : [];
-
-    // ===============================
-    // VALIDASI
-    // ===============================
+    const sourceItems =
+      Array.isArray(body.data)
+        ? body.data
+        : [];
 
     if (!kodeToko) {
       return NextResponse.json(
         {
           success: false,
-          message: "kodeToko/storeId kosong",
+          message:
+            "kodeToko/storeId kosong",
         },
         { status: 400 }
       );
@@ -92,7 +243,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           success: false,
-          message: "dateSo/date kosong",
+          message:
+            "dateSo/date kosong",
         },
         { status: 400 }
       );
@@ -108,175 +260,270 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (items.length === 0) {
+    if (
+      sourceItems.length === 0
+    ) {
       return NextResponse.json(
         {
           success: false,
-          message: "Data item kosong",
+          message:
+            "Data barang kosong",
         },
         { status: 400 }
       );
     }
 
-    // ===============================
-    // SIMPAN SATU PER SATU
-    // ===============================
+    const items =
+      sourceItems.map(
+        normalizeItem
+      );
+
+    // ====================================
+    // CEK DATA WAJIB
+    // ====================================
+
+    const invalidItems =
+      items
+        .map((item, index) => {
+          const missing: string[] =
+            [];
+
+          if (
+            !Number.isFinite(
+              item.plu
+            ) ||
+            item.plu <= 0
+          ) {
+            missing.push("plu");
+          }
+
+          if (!item.descp) {
+            missing.push("descp");
+          }
+
+          if (!item.barcode) {
+            missing.push("barcode");
+          }
+
+          if (!item.tag) {
+            missing.push("tag");
+          }
+
+          if (item.qty === "") {
+            missing.push("qty");
+          }
+
+          if (
+            !Number.isFinite(
+              item.avg_cost
+            )
+          ) {
+            missing.push(
+              "avg_cost"
+            );
+          }
+
+          if (
+            missing.length === 0
+          ) {
+            return null;
+          }
+
+          return {
+            index,
+            plu: item.plu,
+            missing,
+            original:
+              sourceItems[index],
+          };
+        })
+        .filter(Boolean);
+
+    // Jangan kirim 62 request kalau
+    // data dasarnya ternyata tidak lengkap.
+    if (
+      invalidItems.length > 0
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+
+          message:
+            `${invalidItems.length} item memiliki data tidak lengkap.`,
+
+          kodeToko,
+          dateSo,
+          rakSo,
+
+          total:
+            items.length,
+
+          contohError:
+            invalidItems.slice(
+              0,
+              10
+            ),
+
+          hint:
+            "Pastikan frontend mengirim barcode, tag, avg_cost, descp, conv1, conv2 dan subdept dari data asli rak.",
+        },
+        {
+          status: 422,
+        }
+      );
+    }
+
+    // ====================================
+    // KIRIM 1 ITEM PER REQUEST
+    // ====================================
 
     const berhasil: any[] = [];
     const gagal: any[] = [];
 
-    for (let i = 0; i < items.length; i++) {
+    for (
+      let i = 0;
+      i < items.length;
+      i++
+    ) {
       const item = items[i];
-
-      const cleanItem = {
-        plu: Number(item.plu),
-
-        descp: String(
-          item.descp ??
-          item.description ??
-          ""
-        ),
-
-        conv1: Number(item.conv1 ?? 0),
-        conv2: Number(item.conv2 ?? 0),
-        subdept: Number(item.subdept ?? 0),
-
-        barcode: String(
-          item.barcode ??
-          item.barCode ??
-          ""
-        ),
-
-        tag: String(
-          item.tag ?? ""
-        ),
-
-        qty: String(
-          item.qty ??
-          item.jumlah ??
-          "0"
-        ),
-
-        avg_cost: Number(
-          item.avg_cost ??
-          item.avgCost ??
-          0
-        ),
-      };
-
-      // Jangan kirim item yang PLU-nya tidak valid
-      if (
-        !cleanItem.plu ||
-        Number.isNaN(cleanItem.plu)
-      ) {
-        gagal.push({
-          index: i,
-          plu: item.plu,
-          message: "PLU tidak valid",
-        });
-
-        continue;
-      }
 
       const payload = {
         kodeToko,
         dateSo,
         rakSo,
 
-        // PENTING:
-        // hanya SATU item per request
-        data: [cleanItem],
+        // SAMA SEPERTI CAPTURE
+        // APP ASLI
+        data: [item],
       };
 
       console.log(
-        `SAVE ITEM ${i + 1}/${items.length}`,
+        `[${i + 1}/${items.length}]`,
         JSON.stringify(payload)
       );
 
       try {
-        const upstream = await fetch(
-          TARGET_URL,
-          {
-            method: "POST",
+        const upstream =
+          await fetch(
+            TARGET_URL,
+            {
+              method: "POST",
 
-            headers:
-              makeHeaders(kodeToko),
+              headers:
+                headers(
+                  kodeToko
+                ),
 
-            body:
-              JSON.stringify(payload),
+              body:
+                JSON.stringify(
+                  payload
+                ),
 
-            cache: "no-store",
-          }
-        );
+              cache:
+                "no-store",
+            }
+          );
 
         const raw =
           await upstream.text();
 
-        let responseData: any;
+        let result: any;
 
         try {
-          responseData =
+          result =
             JSON.parse(raw);
         } catch {
-          responseData = {
+          result = {
             raw,
           };
         }
 
-        const infoMsg = String(
-          responseData?.infoMsg ??
-          responseData?.message ??
-          ""
+        console.log(
+          "PLU:",
+          item.plu,
+          "STATUS:",
+          upstream.status,
+          "BODY:",
+          result
         );
 
-        const benarBenarBerhasil =
-          upstream.ok &&
-          /berhasil/i.test(infoMsg);
+        const infoMsg =
+          String(
+            result?.infoMsg ??
+            result?.message ??
+            ""
+          );
 
-        if (benarBenarBerhasil) {
+        // Capture Anda menunjukkan
+        // HTTP 201 + infoMsg berhasil.
+        if (
+          upstream.status ===
+            201 ||
+          (
+            upstream.ok &&
+            /berhasil simpan entry kkso/i.test(
+              infoMsg
+            )
+          )
+        ) {
           berhasil.push({
-            plu: cleanItem.plu,
-            status: upstream.status,
-            response: responseData,
+            plu: item.plu,
+            status:
+              upstream.status,
+            response:
+              result,
           });
         } else {
           gagal.push({
-            plu: cleanItem.plu,
-            status: upstream.status,
-            response: responseData,
+            plu: item.plu,
+            status:
+              upstream.status,
+
+            response:
+              result,
+
+            request:
+              payload,
           });
         }
       } catch (error: any) {
         gagal.push({
-          plu: cleanItem.plu,
+          plu: item.plu,
+
           status: 0,
-          message:
+
+          error:
             error?.message ??
             String(error),
+
+          request:
+            payload,
         });
       }
 
-      // Jeda kecil supaya request tidak menumpuk
-      if (i < items.length - 1) {
-        await new Promise(
-          (resolve) =>
-            setTimeout(resolve, 80)
-        );
-      }
+      // jangan bombardir upstream
+      await new Promise(
+        (resolve) =>
+          setTimeout(
+            resolve,
+            120
+          )
+      );
     }
 
-    // ===============================
+    // ====================================
     // HASIL
-    // ===============================
+    // ====================================
 
-    if (gagal.length > 0) {
+    if (
+      gagal.length > 0
+    ) {
       return NextResponse.json(
         {
           success: false,
 
           message:
-            `${berhasil.length} item berhasil, ` +
-            `${gagal.length} item gagal disimpan.`,
+            `${berhasil.length} item berhasil, ${gagal.length} item gagal.`,
 
           kodeToko,
           dateSo,
@@ -291,8 +538,19 @@ export async function POST(req: NextRequest) {
           totalGagal:
             gagal.length,
 
-          berhasil,
-          gagal,
+          // tampilkan response asli
+          // agar penyebab dapat dilihat
+          gagal:
+            gagal.slice(
+              0,
+              10
+            ),
+
+          berhasil:
+            berhasil.slice(
+              0,
+              10
+            ),
         },
         {
           status: 422,
@@ -318,8 +576,6 @@ export async function POST(req: NextRequest) {
           berhasil.length,
 
         totalGagal: 0,
-
-        berhasil,
       },
       {
         status: 200,
@@ -334,8 +590,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         success: false,
+
         message:
           "Gagal memproses Save Entry KKSO",
+
         error:
           error?.message ??
           String(error),
@@ -347,7 +605,6 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// Cek route dari browser
 export async function GET(
   req: NextRequest
 ) {
@@ -356,18 +613,24 @@ export async function GET(
 
   return NextResponse.json({
     success: true,
-    api: "save-entry",
-    method: "POST",
+
+    api:
+      "save-entry",
+
+    method:
+      "POST",
 
     storeId:
-      searchParams.get("storeId") ??
-      "",
+      searchParams.get(
+        "storeId"
+      ) ?? "",
 
     date:
-      searchParams.get("date") ??
-      "",
+      searchParams.get(
+        "date"
+      ) ?? "",
 
     message:
-      "Route aktif. Save item dilakukan satu per satu.",
+      "Route save-entry aktif.",
   });
 }

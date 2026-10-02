@@ -87,7 +87,7 @@ function errorJson(message: string, status = 400) {
  */
 async function forward(
   targetUrl: string,
-  method: "GET" | "POST" | "DELETE",
+  method: "GET" | "POST" | "PUT" | "DELETE",
   storeId: string,
   body?: BodyInit
 ) {
@@ -103,7 +103,7 @@ async function forward(
      * check_scan pada request asli menggunakan POST dengan body kosong.
      * insert_lprice mengirim body JSON.
      */
-    if (method === "POST") {
+    if (method === "POST" || method === "PUT") {
       init.body = body ?? "";
     }
 
@@ -165,6 +165,84 @@ export async function GET(request: NextRequest) {
   return forward(target.toString(), "GET", storeId);
 }
 
+
+async function handleInsertLprice(
+  request: NextRequest,
+  storeId: string,
+  preferredMethod: "POST" | "PUT" = "POST"
+) {
+  let payload: unknown;
+
+  try {
+    payload = await request.json();
+  } catch {
+    return errorJson(
+      'Body JSON wajib diisi. Contoh: {"params":[{"rack":"AU5","plu":"156907"}]}',
+      422
+    );
+  }
+
+  if (
+    !payload ||
+    typeof payload !== "object" ||
+    !("params" in payload) ||
+    !Array.isArray((payload as { params?: unknown }).params)
+  ) {
+    return errorJson('Format body harus memiliki array "params".', 422);
+  }
+
+  const rawParams = (payload as { params: unknown[] }).params;
+
+  if (rawParams.length === 0) {
+    return errorJson('Array "params" tidak boleh kosong.', 422);
+  }
+
+  const params: Array<{ rack: string; plu: string }> = [];
+
+  for (let index = 0; index < rawParams.length; index += 1) {
+    const item = rawParams[index];
+
+    if (!item || typeof item !== "object") {
+      return errorJson(`params[${index}] tidak valid.`, 422);
+    }
+
+    const row = item as Record<string, unknown>;
+    const rack = cleanCode(String(row.rack ?? ""), 120);
+    const plu = cleanCode(String(row.plu ?? ""), 50);
+
+    if (!rack) {
+      return errorJson(`rack pada params[${index}] wajib diisi.`, 422);
+    }
+
+    if (!plu) {
+      return errorJson(`plu pada params[${index}] wajib diisi.`, 422);
+    }
+
+    params.push({ rack, plu });
+  }
+
+  const target = new URL(`${BASE_URL}/insert_lprice/`);
+  target.searchParams.set("storeid", storeId);
+  const body = JSON.stringify({ params });
+
+  // Sebagian versi backend Price Tag menerima POST, sebagian build lama
+  // menjawab 405 dan menerima PUT. Retry HANYA saat 405 agar insert tidak
+  // terkirim dua kali pada request yang sebenarnya sudah berhasil.
+  const first = await forward(
+    target.toString(),
+    preferredMethod,
+    storeId,
+    body
+  );
+
+  if (first.status !== 405) {
+    return first;
+  }
+
+  const fallbackMethod = preferredMethod === "POST" ? "PUT" : "POST";
+  return forward(target.toString(), fallbackMethod, storeId, body);
+}
+
 /*
  * POST CHECK SCAN
  * /api/price?action=check_scan
@@ -221,77 +299,40 @@ export async function POST(request: NextRequest) {
   }
 
   if (action === "insert_lprice") {
-    let payload: unknown;
-
-    try {
-      payload = await request.json();
-    } catch {
-      return errorJson(
-        'Body JSON wajib diisi. Contoh: {"params":[{"rack":"AU5","plu":"156907"}]}',
-        422
-      );
-    }
-
-    if (
-      !payload ||
-      typeof payload !== "object" ||
-      !("params" in payload) ||
-      !Array.isArray((payload as { params?: unknown }).params)
-    ) {
-      return errorJson('Format body harus memiliki array "params".', 422);
-    }
-
-    const rawParams = (payload as { params: unknown[] }).params;
-
-    if (rawParams.length === 0) {
-      return errorJson('Array "params" tidak boleh kosong.', 422);
-    }
-
-    const params: Array<{ rack: string; plu: string }> = [];
-
-    for (let index = 0; index < rawParams.length; index += 1) {
-      const item = rawParams[index];
-
-      if (!item || typeof item !== "object") {
-        return errorJson(`params[${index}] tidak valid.`, 422);
-      }
-
-      const row = item as Record<string, unknown>;
-      const rack = cleanCode(String(row.rack ?? ""), 120);
-      const plu = cleanCode(String(row.plu ?? ""), 50);
-
-      if (!rack) {
-        return errorJson(
-          `rack pada params[${index}] wajib diisi.`,
-          422
-        );
-      }
-
-      if (!plu) {
-        return errorJson(
-          `plu pada params[${index}] wajib diisi.`,
-          422
-        );
-      }
-
-      params.push({ rack, plu });
-    }
-
-    const target = new URL(`${BASE_URL}/insert_lprice/`);
-    target.searchParams.set("storeid", storeId);
-
-    return forward(
-      target.toString(),
-      "POST",
-      storeId,
-      JSON.stringify({ params })
-    );
+    return handleInsertLprice(request, storeId, "POST");
   }
 
   return errorJson(
     "Action POST wajib check_scan atau insert_lprice.",
     400
   );
+}
+
+
+/*
+ * PUT INSERT LPRICE (fallback kompatibilitas)
+ * /api/price?action=insert_lprice&storeId=M604
+ * Body sama dengan POST insert_lprice.
+ */
+export async function PUT(request: NextRequest) {
+  const { searchParams } = new URL(request.url);
+
+  const action = searchParams.get("action");
+  const storeId = cleanStore(
+    searchParams.get("storeId") ||
+      searchParams.get("storeid") ||
+      searchParams.get("store")
+  );
+
+  if (!storeId) {
+    return errorJson("storeId wajib diisi.", 422);
+  }
+
+  if (action !== "insert_lprice") {
+    return errorJson("Action PUT wajib insert_lprice.", 400);
+  }
+
+  return handleInsertLprice(request, storeId, "PUT");
 }
 
 /*

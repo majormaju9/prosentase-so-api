@@ -88,7 +88,8 @@ function errorJson(message: string, status = 400) {
 async function forward(
   targetUrl: string,
   method: "GET" | "POST" | "DELETE",
-  storeId: string
+  storeId: string,
+  body?: BodyInit
 ) {
   try {
     const init: RequestInit = {
@@ -100,9 +101,10 @@ async function forward(
 
     /*
      * check_scan pada request asli menggunakan POST dengan body kosong.
+     * insert_lprice mengirim body JSON.
      */
     if (method === "POST") {
-      init.body = "";
+      init.body = body ?? "";
     }
 
     const response = await fetch(targetUrl, init);
@@ -164,11 +166,21 @@ export async function GET(request: NextRequest) {
 }
 
 /*
- * POST
+ * POST CHECK SCAN
  * /api/price?action=check_scan
  *   &storeId=M604
  *   &barcode=8710103910732
  *   &region=1
+ *
+ * POST INSERT LPRICE
+ * /api/price?action=insert_lprice&storeId=M604
+ * Body JSON:
+ * {
+ *   "params": [
+ *     { "rack": "DE6-02-04-F-A-02-02-10-01-008", "plu": "156907" },
+ *     { "rack": "HB5-04-25-F-A-02-01-07-02-004", "plu": "156907" }
+ *   ]
+ * }
  */
 export async function POST(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -182,33 +194,104 @@ export async function POST(request: NextRequest) {
       searchParams.get("store")
   );
 
-  const barcode = cleanCode(
-    searchParams.get("barcode"),
-    50
-  );
-
-  const region =
-    cleanCode(searchParams.get("region") || "1", 10) ||
-    "1";
-
-  if (action !== "check_scan") {
-    return errorJson("Action POST tidak dikenal.", 400);
-  }
-
   if (!storeId) {
     return errorJson("storeId wajib diisi.", 422);
   }
 
-  if (!barcode) {
-    return errorJson("barcode wajib diisi.", 422);
+  if (action === "check_scan") {
+    const barcode = cleanCode(
+      searchParams.get("barcode"),
+      50
+    );
+
+    const region =
+      cleanCode(searchParams.get("region") || "1", 10) ||
+      "1";
+
+    if (!barcode) {
+      return errorJson("barcode wajib diisi.", 422);
+    }
+
+    const target = new URL(`${BASE_URL}/check_scan/`);
+    target.searchParams.set("storeid", storeId);
+    target.searchParams.set("barcode", barcode);
+    target.searchParams.set("region", region);
+
+    return forward(target.toString(), "POST", storeId);
   }
 
-  const target = new URL(`${BASE_URL}/check_scan/`);
-  target.searchParams.set("storeid", storeId);
-  target.searchParams.set("barcode", barcode);
-  target.searchParams.set("region", region);
+  if (action === "insert_lprice") {
+    let payload: unknown;
 
-  return forward(target.toString(), "POST", storeId);
+    try {
+      payload = await request.json();
+    } catch {
+      return errorJson(
+        'Body JSON wajib diisi. Contoh: {"params":[{"rack":"AU5","plu":"156907"}]}',
+        422
+      );
+    }
+
+    if (
+      !payload ||
+      typeof payload !== "object" ||
+      !("params" in payload) ||
+      !Array.isArray((payload as { params?: unknown }).params)
+    ) {
+      return errorJson('Format body harus memiliki array "params".', 422);
+    }
+
+    const rawParams = (payload as { params: unknown[] }).params;
+
+    if (rawParams.length === 0) {
+      return errorJson('Array "params" tidak boleh kosong.', 422);
+    }
+
+    const params: Array<{ rack: string; plu: string }> = [];
+
+    for (let index = 0; index < rawParams.length; index += 1) {
+      const item = rawParams[index];
+
+      if (!item || typeof item !== "object") {
+        return errorJson(`params[${index}] tidak valid.`, 422);
+      }
+
+      const row = item as Record<string, unknown>;
+      const rack = cleanCode(String(row.rack ?? ""), 120);
+      const plu = cleanCode(String(row.plu ?? ""), 50);
+
+      if (!rack) {
+        return errorJson(
+          `rack pada params[${index}] wajib diisi.`,
+          422
+        );
+      }
+
+      if (!plu) {
+        return errorJson(
+          `plu pada params[${index}] wajib diisi.`,
+          422
+        );
+      }
+
+      params.push({ rack, plu });
+    }
+
+    const target = new URL(`${BASE_URL}/insert_lprice/`);
+    target.searchParams.set("storeid", storeId);
+
+    return forward(
+      target.toString(),
+      "POST",
+      storeId,
+      JSON.stringify({ params })
+    );
+  }
+
+  return errorJson(
+    "Action POST wajib check_scan atau insert_lprice.",
+    400
+  );
 }
 
 /*

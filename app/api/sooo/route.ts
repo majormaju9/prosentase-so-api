@@ -100,7 +100,25 @@ function normalizeDate(dateSo: string) {
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const action = (searchParams.get("action") || "").toLowerCase();
+
+    // action bersifat opsional.
+    // Jika tidak dikirim, route akan menebak otomatis dari parameter:
+    // - ada rakSo/rack => get_data_entry
+    // - ada storeId/kodeToko + dateSo => get_rak_tx_stEntry
+    let action = (searchParams.get("action") || searchParams.get("type") || "").toLowerCase();
+
+    if (!action) {
+      const hasRack = Boolean(
+        (searchParams.get("rakSo") || searchParams.get("rack") || "").trim()
+      );
+      const hasStore = Boolean(
+        (searchParams.get("storeId") || searchParams.get("kodeToko") || "").trim()
+      );
+      const hasDate = Boolean((searchParams.get("dateSo") || "").trim());
+
+      if (hasRack && hasStore && hasDate) action = "data";
+      else if (hasStore && hasDate) action = "rack";
+    }
 
     if (action === "rack") {
       const storeId = (searchParams.get("storeId") || "").trim().toUpperCase();
@@ -155,7 +173,7 @@ export async function GET(req: NextRequest) {
     }
 
     return jsonError(
-      'action GET tidak dikenal. Gunakan "?action=rack" atau "?action=data".'
+      'Parameter GET belum lengkap. Contoh rack: ?storeId=M604&dateSo=08-09-2026. Contoh data: ?kodeToko=M604&dateSo=04-09-2026&rakSo=AU5.'
     );
   } catch (error) {
     console.error("ENTRY KKSO GET ERROR:", error);
@@ -240,7 +258,10 @@ CONTOH PEMAKAIAN ROUTE INI
 ==========================================================
 
 1. GET RACK
-/api/entry-kkso?action=rack&storeId=M604&dateSo=08-09-2026
+/api/entry-kkso?storeId=M604&dateSo=08-09-2026
+
+// Tetap bisa juga:
+// /api/entry-kkso?action=rack&storeId=M604&dateSo=08-09-2026
 
 Upstream:
 GET
@@ -248,7 +269,10 @@ https://app.alfastore.co.id/prd/api/so/entry_kkso/get_rak_tx_stEntry?storeId=M60
 
 
 2. GET DATA ENTRY BERDASARKAN RACK
-/api/entry-kkso?action=data&kodeToko=M604&dateSo=04-09-2026&rakSo=AU5
+/api/entry-kkso?kodeToko=M604&dateSo=04-09-2026&rakSo=AU5
+
+// Tetap bisa juga:
+// /api/entry-kkso?action=data&kodeToko=M604&dateSo=04-09-2026&rakSo=AU5
 
 Upstream:
 GET

@@ -3,17 +3,21 @@
  * Pasang: app/api/so/route.ts (Next.js App Router, Node runtime).
  *
  * ENV server (.env.local / Environment Variables Vercel):
- * SO_PROXY_TOKEN=token-acak-panjang-untuk-pemanggil-server
+ * SO_PROXY_TOKEN=token-acak-panjang-untuk-pemanggil-server (opsional)
  * SO_API_KEY=api-key-resmi-Anda
  * SO_UPSTREAM_HEADERS_JSON={"Version-App":"...","Version-Code":"...","User-Id":"...","Store-Id":"M604","Shard-Id":"..."}
  * SO_TIMEOUT_MS=25000 (opsional, 1000–55000 ms)
  * Header upstream lain sesuai sesi APK dapat dimasukkan dalam JSON di atas.
  * Jangan gunakan prefix NEXT_PUBLIC untuk rahasia. Panggil dari PHP/server Anda
- * dengan Authorization: Bearer <SO_PROXY_TOKEN>. Token proxy tidak diteruskan.
+ * dengan Authorization: Bearer <SO_PROXY_TOKEN> hanya jika env tersebut diisi.
+ * Jika SO_PROXY_TOKEN kosong/tidak diatur, pemeriksaan token proxy dilewati.
+ * Header API dari request (Api-Key, AndroidId, Branch-Id, Mac-Addr, dll)
+ * diteruskan; konfigurasi environment server mengambil prioritas.
+ * Authorization dan Cookie request tidak diteruskan. Token proxy tidak diteruskan.
  * Token ini memberikan akses ke seluruh endpoint; integrasikan otorisasi pengguna
  * pada backend pemanggil sebelum memakai proxy untuk banyak pengguna/toko.
  *
- * GET /api/so?action=list -> katalog 69 endpoint dan parameter (butuh token).
+ * GET /api/so?action=list -> katalog 69 endpoint dan parameter.
  * GET /api/so?action=jadwal_so_vs_sudah_so&storeId=M604&dateSo=03-10-2026
  * GET /api/so?action=so/entry_kkso/get_data_entry&kodeToko=M604&dateSo=03-10-2026&rakSo=AU5
  * POST /api/so?action=so/check_entry/save_check_entry
@@ -899,7 +903,7 @@ function json(data: unknown, status = 200, extra?: HeadersInit): Response {
 }
 function authenticate(req: Request): void {
   const expected = process.env.SO_PROXY_TOKEN;
-  if (!expected) throw new ProxyError(503, "Atur SO_PROXY_TOKEN di environment server.");
+  if (!expected) return;
   const authorization = req.headers.get("authorization") ?? "";
   const supplied = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
   const a = Buffer.from(expected);
@@ -908,8 +912,13 @@ function authenticate(req: Request): void {
     throw new ProxyError(401, "Token proxy tidak valid.");
   }
 }
-function upstreamHeaders(): Headers {
+function upstreamHeaders(req: Request): Headers {
   const headers = new Headers({ "App-Name": "SO-PDA", Platform: "ANDROID", Accept: "*/*" });
+  for (const name of UPSTREAM_HEADERS) {
+    if (name === "Authorization" || name === "Cookie") continue;
+    const value = req.headers.get(name);
+    if (value !== null) headers.set(name, value);
+  }
   const raw = process.env.SO_UPSTREAM_HEADERS_JSON;
   if (raw) {
     try {
@@ -992,7 +1001,7 @@ async function handle(req: Request): Promise<Response> {
         throw new ProxyError(400, `Parameter ${key} diperlukan.`);
       }
     }
-    const headers = upstreamHeaders();
+    const headers = upstreamHeaders(req);
     const body = req.method === "GET" ? undefined : await readBody(req);
     if (body !== undefined) headers.set("Content-Type", "application/json; charset=utf-8");
     const configured = Number(process.env.SO_TIMEOUT_MS ?? 25000);

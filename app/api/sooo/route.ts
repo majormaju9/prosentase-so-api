@@ -12,37 +12,38 @@ const ENDPOINTS = {
   saveItem: `${BASE_URL}/save_per_item`,
 } as const;
 
-function jsonError(message: string, status = 400) {
+function jsonError(message: string, status = 400, extra: Record<string, unknown> = {}) {
   return NextResponse.json(
-    { success: false, message },
+    { success: false, message, ...extra },
     { status }
   );
 }
 
 function requireEnv(name: string) {
   const value = process.env[name]?.trim();
-  if (!value) throw new Error(`Environment variable ${name} belum diisi`);
+  if (!value) {
+    throw new Error(`Environment variable ${name} belum diisi`);
+  }
   return value;
 }
 
-/**
- * Header mengikuti pola request aplikasi pada referensi.
- * Data yang bersifat credential/device-specific disimpan di environment variable,
- * supaya tidak ikut bocor di source code / browser.
- *
- * Contoh environment variable yang perlu disiapkan:
- * ALFA_API_KEY=...
- * ALFA_USER_ID=...
- * ALFA_ANDROID_ID=...
- * ALFA_MAC_ADDR=...
- *
- * Opsional:
- * ALFA_BRANCH_ID=MZ01
- * ALFA_IP_ADDR=10.1.10.1
- * ALFA_VERSION_APP=V.2026.04.13.01-alfa
- * ALFA_VERSION_CODE=28
- */
-function buildHeaders(storeId: string, hasJsonBody = false): HeadersInit {
+/*
+  Header sensitif tetap disimpan di environment variable server.
+
+  WAJIB:
+  ALFA_API_KEY
+  ALFA_USER_ID
+  ALFA_ANDROID_ID
+
+  OPSIONAL:
+  ALFA_MAC_ADDR
+  ALFA_BRANCH_ID
+  ALFA_IP_ADDR
+  ALFA_VERSION_APP
+  ALFA_VERSION_CODE
+  ALFA_USER_AGENT
+*/
+function buildHeaders(storeId: string, jsonBody = false): HeadersInit {
   const androidId = requireEnv("ALFA_ANDROID_ID");
 
   const headers: Record<string, string> = {
@@ -52,79 +53,289 @@ function buildHeaders(storeId: string, hasJsonBody = false): HeadersInit {
       process.env.ALFA_USER_AGENT ||
       "Dalvik/2.1.0 (Linux; U; Android 15)",
     "Version-App":
-      process.env.ALFA_VERSION_APP || "V.2026.04.13.01-alfa",
+      process.env.ALFA_VERSION_APP ||
+      "V.2026.04.13.01-alfa",
     "Version-Code":
-      process.env.ALFA_VERSION_CODE || "28",
+      process.env.ALFA_VERSION_CODE ||
+      "28",
     "User-Id": requireEnv("ALFA_USER_ID"),
     "Store-Id": storeId,
-    "Ip-Addr": process.env.ALFA_IP_ADDR || "10.1.10.1",
+    "Ip-Addr":
+      process.env.ALFA_IP_ADDR ||
+      "10.1.10.1",
     "Api-Key": requireEnv("ALFA_API_KEY"),
     AndroidId: androidId,
-    "Branch-Id": process.env.ALFA_BRANCH_ID || "MZ01",
+    "Branch-Id":
+      process.env.ALFA_BRANCH_ID ||
+      "MZ01",
     Platform: "ANDROID",
-    "Mac-Addr": process.env.ALFA_MAC_ADDR || androidId,
+    "Mac-Addr":
+      process.env.ALFA_MAC_ADDR ||
+      androidId,
     Connection: "Keep-Alive",
     "Accept-Encoding": "gzip",
   };
 
-  if (hasJsonBody) {
+  if (jsonBody) {
     headers["Content-Type"] = "application/json; charset=utf-8";
   }
 
   return headers;
 }
 
+/*
+  Terima dua format:
+  - 03-10-2026
+  - 2026-10-03
+
+  Upstream ALFASTORE menerima DD-MM-YYYY.
+*/
+function toApiDate(value: unknown): string {
+  const raw = String(value ?? "").trim();
+
+  if (/^\d{2}-\d{2}-\d{4}$/.test(raw)) {
+    return raw;
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    const [y, m, d] = raw.split("-");
+    return `${d}-${m}-${y}`;
+  }
+
+  throw new Error(
+    "Format tanggal tidak valid. Gunakan YYYY-MM-DD atau DD-MM-YYYY."
+  );
+}
+
+function normalizeStore(value: unknown): string {
+  return String(value ?? "").trim().toUpperCase();
+}
+
+function normalizeNumber(value: unknown, fallback = 0): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 async function proxyResponse(response: Response) {
   const body = await response.text();
-
-  const contentType =
-    response.headers.get("content-type") || "application/json; charset=utf-8";
 
   return new NextResponse(body, {
     status: response.status,
     headers: {
-      "Content-Type": contentType,
-      "Cache-Control": "no-store, no-cache, must-revalidate",
+      "Content-Type":
+        response.headers.get("content-type") ||
+        "application/json; charset=utf-8",
+      "Cache-Control":
+        "no-store, no-cache, must-revalidate",
     },
   });
 }
 
-function normalizeDate(dateSo: string) {
-  // Endpoint referensi menggunakan DD-MM-YYYY.
-  if (!/^\d{2}-\d{2}-\d{4}$/.test(dateSo)) {
-    throw new Error("dateSo harus format DD-MM-YYYY, contoh 08-09-2026");
+/*
+  FRONTEND BOLEH KIRIM FORMAT SEPERTI INI:
+
+  {
+    "kodeToko": "M604",
+    "dateSo": "2026-10-03",
+    "data": [
+      {
+        "avg_cost": "0",
+        "barcode": "899886620289",
+        "date": "2026-10-03",
+        "f_tag": "0",
+        "item_descp": "GOLDA CAPPUCCINO PET 200ML",
+        "plu": "432393",
+        "qty": 1,
+        "resetQty": false,
+        "rack": "AU5",
+        "tag": "F"
+      }
+    ]
   }
-  return dateSo;
+
+  Route akan mengubahnya menjadi format upstream:
+
+  {
+    "kodeToko": "M604",
+    "dateSo": "03-10-2026",
+    "rakSo": "AU5",
+    "data": [
+      {
+        "plu": 432393,
+        "descp": "GOLDA CAPPUCCINO PET 200ML",
+        "conv1": 0,
+        "conv2": 0,
+        "subdept": 0,
+        "barcode": "899886620289",
+        "tag": "F",
+        "qty": "1",
+        "avg_cost": 0
+      }
+    ]
+  }
+*/
+function transformSaveBody(input: any) {
+  const kodeToko = normalizeStore(
+    input?.kodeToko ||
+    input?.storeId ||
+    input?.storeIdHeader
+  );
+
+  if (!kodeToko) {
+    throw new Error("kodeToko wajib diisi");
+  }
+
+  const dateSo = toApiDate(
+    input?.dateSo ||
+    input?.date
+  );
+
+  const sourceData = Array.isArray(input?.data)
+    ? input.data
+    : [];
+
+  if (sourceData.length === 0) {
+    throw new Error("data minimal harus berisi 1 item");
+  }
+
+  const rakSo = String(
+    input?.rakSo ||
+    input?.rack ||
+    sourceData[0]?.rakSo ||
+    sourceData[0]?.rack ||
+    ""
+  ).trim();
+
+  if (!rakSo) {
+    throw new Error(
+      "rakSo/rack tidak ditemukan. Isi rakSo di body atau rack pada data item."
+    );
+  }
+
+  const data = sourceData.map((item: any) => {
+    const pluRaw =
+      item?.plu ??
+      item?.PLU ??
+      item?.article_code ??
+      "";
+
+    const pluNumber = Number(pluRaw);
+
+    return {
+      plu: Number.isFinite(pluNumber)
+        ? pluNumber
+        : pluRaw,
+
+      descp: String(
+        item?.descp ??
+        item?.item_descp ??
+        item?.description ??
+        item?.nama ??
+        ""
+      ),
+
+      conv1: normalizeNumber(item?.conv1, 0),
+      conv2: normalizeNumber(item?.conv2, 0),
+      subdept: normalizeNumber(item?.subdept, 0),
+
+      barcode: String(
+        item?.barcode ??
+        item?.barcode_no ??
+        "0"
+      ),
+
+      tag: String(
+        item?.tag ??
+        item?.f_tag ??
+        ""
+      ),
+
+      // Referensi request native mengirim qty sebagai string.
+      qty: String(
+        item?.resetQty === true
+          ? 0
+          : normalizeNumber(item?.qty, 0)
+      ),
+
+      avg_cost: normalizeNumber(
+        item?.avg_cost,
+        0
+      ),
+    };
+  });
+
+  return {
+    kodeToko,
+    dateSo,
+    rakSo,
+    data,
+  };
 }
 
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
 
-    // action bersifat opsional.
-    // Jika tidak dikirim, route akan menebak otomatis dari parameter:
-    // - ada rakSo/rack => get_data_entry
-    // - ada storeId/kodeToko + dateSo => get_rak_tx_stEntry
-    let action = (searchParams.get("action") || searchParams.get("type") || "").toLowerCase();
+    let action = (
+      searchParams.get("action") ||
+      searchParams.get("type") ||
+      ""
+    ).toLowerCase();
 
+    /*
+      action opsional:
+      - ada rack/rakSo => data
+      - tanpa rack => rack
+    */
     if (!action) {
       const hasRack = Boolean(
-        (searchParams.get("rakSo") || searchParams.get("rack") || "").trim()
+        (
+          searchParams.get("rakSo") ||
+          searchParams.get("rack") ||
+          ""
+        ).trim()
       );
-      const hasStore = Boolean(
-        (searchParams.get("storeId") || searchParams.get("kodeToko") || "").trim()
-      );
-      const hasDate = Boolean((searchParams.get("dateSo") || "").trim());
 
-      if (hasRack && hasStore && hasDate) action = "data";
-      else if (hasStore && hasDate) action = "rack";
+      const hasStore = Boolean(
+        (
+          searchParams.get("storeId") ||
+          searchParams.get("kodeToko") ||
+          ""
+        ).trim()
+      );
+
+      const hasDate = Boolean(
+        (
+          searchParams.get("dateSo") ||
+          searchParams.get("date") ||
+          ""
+        ).trim()
+      );
+
+      if (hasRack && hasStore && hasDate) {
+        action = "data";
+      } else if (hasStore && hasDate) {
+        action = "rack";
+      }
     }
 
-    if (action === "rack") {
-      const storeId = (searchParams.get("storeId") || "").trim().toUpperCase();
-      const dateSo = normalizeDate((searchParams.get("dateSo") || "").trim());
+    if (
+      action === "rack" ||
+      action === "get_rak_tx_stentry"
+    ) {
+      const storeId = normalizeStore(
+        searchParams.get("storeId") ||
+        searchParams.get("kodeToko")
+      );
 
-      if (!storeId) return jsonError("storeId wajib diisi");
+      if (!storeId) {
+        return jsonError("storeId wajib diisi");
+      }
+
+      const dateSo = toApiDate(
+        searchParams.get("dateSo") ||
+        searchParams.get("date")
+      );
 
       const url = new URL(ENDPOINTS.rack);
       url.searchParams.set("storeId", storeId);
@@ -139,24 +350,34 @@ export async function GET(req: NextRequest) {
       return proxyResponse(upstream);
     }
 
-    if (action === "data") {
-      const kodeToko = (
+    if (
+      action === "data" ||
+      action === "item" ||
+      action === "get_data_entry"
+    ) {
+      const kodeToko = normalizeStore(
         searchParams.get("kodeToko") ||
-        searchParams.get("storeId") ||
-        ""
-      )
-        .trim()
-        .toUpperCase();
+        searchParams.get("storeId")
+      );
 
-      const dateSo = normalizeDate((searchParams.get("dateSo") || "").trim());
-      const rakSo = (
+      if (!kodeToko) {
+        return jsonError("kodeToko wajib diisi");
+      }
+
+      const dateSo = toApiDate(
+        searchParams.get("dateSo") ||
+        searchParams.get("date")
+      );
+
+      const rakSo = String(
         searchParams.get("rakSo") ||
         searchParams.get("rack") ||
         ""
       ).trim();
 
-      if (!kodeToko) return jsonError("kodeToko wajib diisi");
-      if (!rakSo) return jsonError("rakSo wajib diisi");
+      if (!rakSo) {
+        return jsonError("rakSo/rack wajib diisi");
+      }
 
       const url = new URL(ENDPOINTS.data);
       url.searchParams.set("kodeToko", kodeToko);
@@ -173,12 +394,22 @@ export async function GET(req: NextRequest) {
     }
 
     return jsonError(
-      'Parameter GET belum lengkap. Contoh rack: ?storeId=M604&dateSo=08-09-2026. Contoh data: ?kodeToko=M604&dateSo=04-09-2026&rakSo=AU5.'
+      "Parameter GET belum lengkap.",
+      400,
+      {
+        contohRack:
+          "?storeId=M604&dateSo=2026-10-03",
+        contohData:
+          "?kodeToko=M604&dateSo=2026-10-03&rakSo=AU5",
+      }
     );
   } catch (error) {
     console.error("ENTRY KKSO GET ERROR:", error);
+
     return jsonError(
-      error instanceof Error ? error.message : "Terjadi kesalahan server",
+      error instanceof Error
+        ? error.message
+        : "Terjadi kesalahan server",
       500
     );
   }
@@ -187,30 +418,31 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const action = (searchParams.get("action") || "").toLowerCase();
 
-    const body = await req.json();
+    /*
+      Default POST = save_entry_kkso.
+      Jadi frontend lama tidak wajib menambah ?action=save-entry.
 
-    const kodeToko = String(
-      body?.kodeToko ||
-      body?.storeId ||
-      body?.storeIdHeader ||
-      ""
-    )
-      .trim()
-      .toUpperCase();
+      Untuk save_per_item:
+      ?action=save-item
+    */
+    const action = (
+      searchParams.get("action") ||
+      searchParams.get("type") ||
+      "save-entry"
+    ).toLowerCase();
 
-    if (!kodeToko) return jsonError("kodeToko pada body wajib diisi");
+    const rawBody = await req.json();
 
-    if (body?.dateSo) {
-      normalizeDate(String(body.dateSo));
-    }
+    // Transform body frontend -> format native upstream.
+    const body = transformSaveBody(rawBody);
 
     let endpoint: string;
 
     if (
       action === "save" ||
       action === "save-entry" ||
+      action === "save_entry" ||
       action === "save_entry_kkso"
     ) {
       endpoint = ENDPOINTS.saveEntry;
@@ -222,13 +454,16 @@ export async function POST(req: NextRequest) {
       endpoint = ENDPOINTS.saveItem;
     } else {
       return jsonError(
-        'action POST tidak dikenal. Gunakan "?action=save-entry" atau "?action=save-item".'
+        'Action POST tidak dikenal. Gunakan "?action=save-entry" atau "?action=save-item".'
       );
     }
 
     const upstream = await fetch(endpoint, {
       method: "POST",
-      headers: buildHeaders(kodeToko, true),
+      headers: buildHeaders(
+        body.kodeToko,
+        true
+      ),
       body: JSON.stringify(body),
       cache: "no-store",
     });
@@ -236,8 +471,11 @@ export async function POST(req: NextRequest) {
     return proxyResponse(upstream);
   } catch (error) {
     console.error("ENTRY KKSO POST ERROR:", error);
+
     return jsonError(
-      error instanceof Error ? error.message : "Terjadi kesalahan server",
+      error instanceof Error
+        ? error.message
+        : "Terjadi kesalahan server",
       500
     );
   }
@@ -253,104 +491,82 @@ export async function OPTIONS() {
 }
 
 /*
-==========================================================
-CONTOH PEMAKAIAN ROUTE INI
-==========================================================
+===========================================================
+CONTOH PAKAI
+===========================================================
 
 1. GET RACK
-/api/entry-kkso?storeId=M604&dateSo=08-09-2026
 
-// Tetap bisa juga:
-// /api/entry-kkso?action=rack&storeId=M604&dateSo=08-09-2026
+/api/entry-kkso?storeId=M604&dateSo=2026-10-03
 
-Upstream:
+Akan diteruskan ke:
+
 GET
-https://app.alfastore.co.id/prd/api/so/entry_kkso/get_rak_tx_stEntry?storeId=M604&dateSo=08-09-2026
+https://app.alfastore.co.id/prd/api/so/entry_kkso/get_rak_tx_stEntry?storeId=M604&dateSo=03-10-2026
 
 
-2. GET DATA ENTRY BERDASARKAN RACK
-/api/entry-kkso?kodeToko=M604&dateSo=04-09-2026&rakSo=AU5
+2. GET DATA RACK
 
-// Tetap bisa juga:
-// /api/entry-kkso?action=data&kodeToko=M604&dateSo=04-09-2026&rakSo=AU5
+/api/entry-kkso?kodeToko=M604&dateSo=2026-10-03&rakSo=AU5
 
-Upstream:
+Akan diteruskan ke:
+
 GET
-https://app.alfastore.co.id/prd/api/so/entry_kkso/get_data_entry?kodeToko=M604&dateSo=04-09-2026&rakSo=AU5
+https://app.alfastore.co.id/prd/api/so/entry_kkso/get_data_entry?kodeToko=M604&dateSo=03-10-2026&rakSo=AU5
 
 
-3. SAVE ENTRY KKSO
-POST /api/entry-kkso?action=save-entry
-Content-Type: application/json
+3. SAVE ENTRY — BODY FRONTEND LAMA TETAP BISA
 
-Contoh body:
+POST /api/entry-kkso
+
 {
   "kodeToko": "M604",
-  "dateSo": "23-09-2026",
-  "rakSo": "HB4",
+  "dateSo": "2026-10-03",
   "data": [
     {
-      "plu": 434889,
-      "descp": "SILVER QUEEN CASHEW 3X52G",
-      "conv1": 0,
-      "conv2": 0,
-      "subdept": 0,
-      "barcode": "899100166335",
-      "tag": "P",
-      "qty": "0",
-      "avg_cost": 25033.14
+      "avg_cost": "0",
+      "barcode": "899886620289",
+      "date": "2026-10-03",
+      "f_tag": "0",
+      "item_descp": "GOLDA CAPPUCCINO PET 200ML",
+      "plu": "432393",
+      "qty": 1,
+      "resetQty": false,
+      "rack": "AU5",
+      "tag": "F"
     }
   ]
 }
 
-Upstream:
-POST
-https://app.alfastore.co.id/prd/api/so/entry_kkso/save_entry_kkso
+Route otomatis mengirim upstream:
+
+{
+  "kodeToko": "M604",
+  "dateSo": "03-10-2026",
+  "rakSo": "AU5",
+  "data": [
+    {
+      "plu": 432393,
+      "descp": "GOLDA CAPPUCCINO PET 200ML",
+      "conv1": 0,
+      "conv2": 0,
+      "subdept": 0,
+      "barcode": "899886620289",
+      "tag": "F",
+      "qty": "1",
+      "avg_cost": 0
+    }
+  ]
+}
 
 
 4. SAVE PER ITEM
+
 POST /api/entry-kkso?action=save-item
-Content-Type: application/json
 
-Contoh body:
-{
-  "kodeToko": "M604",
-  "dateSo": "29-09-2026",
-  "rakSo": "ZR1",
-  "data": [
-    {
-      "plu": 262564,
-      "descp": "AQUA AIR MNRL BKL NAS GLN 19L",
-      "conv1": 0,
-      "conv2": 0,
-      "subdept": 0,
-      "barcode": "0",
-      "tag": "K",
-      "qty": "31",
-      "avg_cost": 17478
-    }
-  ]
-}
+Body boleh tetap memakai format frontend yang sama.
+Route akan mentransformasikannya ke format native lalu dikirim ke:
 
-Upstream:
-POST
 https://app.alfastore.co.id/prd/api/so/entry_kkso/save_per_item
-
-==========================================================
-CATATAN ENVIRONMENT VARIABLE
-==========================================================
-
-ALFA_API_KEY=isi_api_key
-ALFA_USER_ID=isi_user_id
-ALFA_ANDROID_ID=isi_android_id
-ALFA_MAC_ADDR=isi_mac_address
-
-Opsional:
-ALFA_BRANCH_ID=MZ01
-ALFA_IP_ADDR=10.1.10.1
-ALFA_VERSION_APP=V.2026.04.13.01-alfa
-ALFA_VERSION_CODE=28
-ALFA_USER_AGENT=Dalvik/2.1.0 (Linux; U; Android 15)
-
-Simpan credential di environment/server, jangan ditaruh di JavaScript browser.
+===========================================================
 */

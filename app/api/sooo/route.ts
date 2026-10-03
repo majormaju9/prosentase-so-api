@@ -12,10 +12,17 @@ const ENDPOINTS = {
   saveItem: `${BASE_URL}/save_per_item`,
 } as const;
 
+const CORS_HEADERS: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  "Access-Control-Max-Age": "86400",
+};
+
 function jsonError(message: string, status = 400, extra: Record<string, unknown> = {}) {
   return NextResponse.json(
     { success: false, message, ...extra },
-    { status }
+    { status, headers: CORS_HEADERS }
   );
 }
 
@@ -122,6 +129,7 @@ async function proxyResponse(response: Response) {
   return new NextResponse(body, {
     status: response.status,
     headers: {
+      ...CORS_HEADERS,
       "Content-Type":
         response.headers.get("content-type") ||
         "application/json; charset=utf-8",
@@ -288,7 +296,7 @@ export async function GET(req: NextRequest) {
           saveEntry: "POST ?type=save",
           savePerItem: "POST ?type=save-item"
         }
-      });
+      }, { headers: CORS_HEADERS });
     }
 
     let action = (
@@ -504,6 +512,7 @@ export async function OPTIONS() {
   return new NextResponse(null, {
     status: 204,
     headers: {
+      ...CORS_HEADERS,
       Allow: "GET, POST, OPTIONS",
     },
   });

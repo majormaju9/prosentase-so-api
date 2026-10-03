@@ -276,6 +276,21 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
 
+    // Jika route dibuka langsung tanpa query parameter, jangan dianggap error.
+    // Tampilkan status route + format pemakaian.
+    if ([...searchParams.keys()].length === 0) {
+      return NextResponse.json({
+        success: true,
+        message: "ENTRY KKSO proxy siap digunakan",
+        endpoints: {
+          rack: "?type=rack&storeId=M604&date=03-10-2026",
+          data: "?type=item&storeId=M604&date=03-10-2026&rack=AU5",
+          saveEntry: "POST ?type=save",
+          savePerItem: "POST ?type=save-item"
+        }
+      });
+    }
+
     let action = (
       searchParams.get("action") ||
       searchParams.get("type") ||
@@ -398,9 +413,13 @@ export async function GET(req: NextRequest) {
       400,
       {
         contohRack:
-          "?storeId=M604&dateSo=2026-10-03",
+          "?type=rack&storeId=M604&date=03-10-2026",
         contohData:
-          "?kodeToko=M604&dateSo=2026-10-03&rakSo=AU5",
+          "?type=item&storeId=M604&date=03-10-2026&rack=AU5",
+        alternatifRack:
+          "?storeId=M604&dateSo=2026-10-03",
+        alternatifData:
+          "?kodeToko=M604&dateSo=2026-10-03&rakSo=AU5"
       }
     );
   } catch (error) {

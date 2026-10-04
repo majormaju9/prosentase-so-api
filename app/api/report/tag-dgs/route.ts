@@ -1,55 +1,51 @@
 import { NextRequest } from "next/server";
- 
+
 const ALFASTORE_URL =
-"[https://app.alfastore.co.id/prd/api/rpt/laporan/rpt\_plu\_discontinue](https://app.alfastore.co.id/prd/api/rpt/laporan/rpt_plu_discontinue)";
- 
+  "https://app.alfastore.co.id/prd/api/rpt/laporan/rpt_plu_discontinue";
+
 export async function GET(request: NextRequest) {
-try {
-const { searchParams } = new URL(request.url);
- 
-```
-const apiUrl =  
-  `${ALFASTORE_URL}?` +  
-  Array.from(searchParams.entries())  
-    .map(([key, value]) =>  
-      `${encodeURIComponent(key)}=${encodeURIComponent(value)}`  
-    )  
-    .join("&");  
+  try {
+    const { searchParams } = new URL(request.url);
 
-const response = await fetch(apiUrl, {  
-  method: "GET",  
-  headers: {  
-    "App-Name": "CEXP-CLOUD",  
-    "User-Agent": "Mozilla/5.0",  
-  },  
-  cache: "no-store",  
-});  
+    // Bisa custom dari URL, default M604
+    const storeId = searchParams.get("storeId") || "M604";
 
-const result = await response.text();  
+    const apiUrl =
+      `${ALFASTORE_URL}?` +
+      new URLSearchParams({
+        storeId,
+        userId: "23067884",
+        filter_tag: "DGS",
+      }).toString();
 
-return new Response(result, {  
-  status: response.status,  
-  headers: {  
-    "Content-Type":  
-      response.headers.get("content-type") ||  
-      "text/html; charset=utf-8",  
-    "Cache-Control": "no-store",  
-  },  
-});  
-```
- 
-} catch (error) {
-return Response.json(
-{
-success: false,
-message: "Gagal mengambil laporan AlfaStore",
-error:
-error instanceof Error
-? error.message
-: String(error),
-},
-{ status: 500 }
-);
+    const response = await fetch(apiUrl, {
+      method: "GET",
+      headers: {
+        "App-Name": "CEXP-CLOUD",
+        "User-Agent": "Mozilla/5.0",
+      },
+      cache: "no-store",
+    });
+
+    const result = await response.text();
+
+    return new Response(result, {
+      status: response.status,
+      headers: {
+        "Content-Type":
+          response.headers.get("content-type") ||
+          "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
+      },
+    });
+  } catch (error) {
+    return Response.json(
+      {
+        success: false,
+        message: "Gagal mengambil laporan AlfaStore",
+        error: error instanceof Error ? error.message : String(error),
+      },
+      { status: 500 }
+    );
+  }
 }
-}
- 

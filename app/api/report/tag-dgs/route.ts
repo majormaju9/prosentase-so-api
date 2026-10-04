@@ -1,21 +1,11 @@
 import { NextRequest } from "next/server";
 
 const ALFASTORE_URL =
-  "https://app.alfastore.co.id/prd/api/rpt/laporan/rpt_plu_discontinue";
+  "https://app.alfastore.co.id/prd/api/rpt/laporan/rpt_plu_discontinue?storeId=M604&userId=23067884&filter_tag=DGS";
 
 export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
-
-    const apiUrl =
-      `${ALFASTORE_URL}?` +
-      Array.from(searchParams.entries())
-        .map(([key, value]) =>
-          `${encodeURIComponent(key)}=${encodeURIComponent(value)}`
-        )
-        .join("&");
-
-    const response = await fetch(apiUrl, {
+    const response = await fetch(ALFASTORE_URL, {
       method: "GET",
       headers: {
         "App-Name": "CEXP-CLOUD",
@@ -35,16 +25,12 @@ export async function GET(request: NextRequest) {
         "Cache-Control": "no-store",
       },
     });
-
   } catch (error) {
     return Response.json(
       {
         success: false,
         message: "Gagal mengambil laporan AlfaStore",
-        error:
-          error instanceof Error
-            ? error.message
-            : String(error),
+        error: error instanceof Error ? error.message : String(error),
       },
       { status: 500 }
     );

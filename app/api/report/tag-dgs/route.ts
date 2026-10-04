@@ -1,38 +1,55 @@
 import { NextRequest } from "next/server";
-
+ 
 const ALFASTORE_URL =
-  "https://app.alfastore.co.id/prd/api/rpt/laporan/rpt_plu_discontinue?storeId=M604&userId=23067884&filter_tag=DGS";
-
+"[https://app.alfastore.co.id/prd/api/rpt/laporan/rpt\_plu\_discontinue](https://app.alfastore.co.id/prd/api/rpt/laporan/rpt_plu_discontinue)";
+ 
 export async function GET(request: NextRequest) {
-  try {
-    const response = await fetch(ALFASTORE_URL, {
-      method: "GET",
-      headers: {
-        "App-Name": "CEXP-CLOUD",
-        "User-Agent": "Mozilla/5.0",
-      },
-      cache: "no-store",
-    });
+try {
+const { searchParams } = new URL(request.url);
+ 
+```
+const apiUrl =  
+  `${ALFASTORE_URL}?` +  
+  Array.from(searchParams.entries())  
+    .map(([key, value]) =>  
+      `${encodeURIComponent(key)}=${encodeURIComponent(value)}`  
+    )  
+    .join("&");  
 
-    const result = await response.text();
+const response = await fetch(apiUrl, {  
+  method: "GET",  
+  headers: {  
+    "App-Name": "CEXP-CLOUD",  
+    "User-Agent": "Mozilla/5.0",  
+  },  
+  cache: "no-store",  
+});  
 
-    return new Response(result, {
-      status: response.status,
-      headers: {
-        "Content-Type":
-          response.headers.get("content-type") ||
-          "text/html; charset=utf-8",
-        "Cache-Control": "no-store",
-      },
-    });
-  } catch (error) {
-    return Response.json(
-      {
-        success: false,
-        message: "Gagal mengambil laporan AlfaStore",
-        error: error instanceof Error ? error.message : String(error),
-      },
-      { status: 500 }
-    );
-  }
+const result = await response.text();  
+
+return new Response(result, {  
+  status: response.status,  
+  headers: {  
+    "Content-Type":  
+      response.headers.get("content-type") ||  
+      "text/html; charset=utf-8",  
+    "Cache-Control": "no-store",  
+  },  
+});  
+```
+ 
+} catch (error) {
+return Response.json(
+{
+success: false,
+message: "Gagal mengambil laporan AlfaStore",
+error:
+error instanceof Error
+? error.message
+: String(error),
+},
+{ status: 500 }
+);
 }
+}
+ 

@@ -4,6 +4,8 @@
  * Endpoint lokal: /api/so?action=<nama_action>
  * Semua request ke API Stock Opname dilewatkan dari server Next.js.
  * Konfigurasi API Key dan token proxy berada langsung di file SERVER ini.
+ * Browser biasa tidak mengirim X-SO-Token: mendukung Basic Auth agar
+ * kunjungan langsung ke URL akan memunculkan dialog login.
  * JANGAN menaruh file ini di folder frontend/client atau repositori publik.
  *
  * API yang didukung (5 GET, 3 POST):
@@ -103,14 +105,47 @@ function jsonError(message: string, status: number) {
   return NextResponse.json({ ok: false, error: message }, { status });
 }
 
-/** Token khusus untuk mengakses proxy, *tidak sama* dengan API Key upstream. */
+/** Token khusus untuk mengakses proxy, *bukan* Api-Key milik server SO. */
 function authorized(request: NextRequest): boolean {
   const secret = process.env.SO_PROXY_TOKEN || INLINE_PROXY_TOKEN;
-  const bearer = request.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1];
-  const supplied = bearer || request.headers.get("x-so-token") || "";
-  const a = Buffer.from(secret);
-  const b = Buffer.from(supplied);
+  const authorization = request.headers.get("authorization") || "";
+  const bearer = authorization.match(/^Bearer\s+(.+)$/i)?.[1];
+  let basicToken: string | undefined;
+
+  // Tambahan: Chrome/browser dapat memunculkan dialog login HTTP Basic.
+  // Username: so; Password: nilai SO_PROXY_TOKEN / INLINE_PROXY_TOKEN.
+  const basic = authorization.match(/^Basic\s+([A-Za-z0-9+/=]+)$/i)?.[1];
+  if (basic) {
+    try {
+      const credentials = Buffer.from(basic, "base64").toString("utf8");
+      if (credentials.startsWith("so:")) basicToken = credentials.slice(3);
+    } catch {
+      // Kredensial tidak valid.
+    }
+  }
+
+  const supplied = bearer || request.headers.get("x-so-token") || basicToken || "";
+  const a = Buffer.from(secret, "utf8");
+  const b = Buffer.from(supplied, "utf8");
   return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function unauthorizedResponse() {
+  // WWW-Authenticate mengizinkan browser meminta username/password
+  // alih-alih hanya menampilkan JSON Unauthorized.
+  return NextResponse.json(
+    {
+      ok: false,
+      error: "Unauthorized. Gunakan X-SO-Token, Authorization: Bearer, atau login Basic (username: so, password: token proxy).",
+    },
+    {
+      status: 401,
+      headers: {
+        "WWW-Authenticate": 'Basic realm="Entry SO Proxy", charset="UTF-8"',
+        "Cache-Control": "no-store",
+      },
+    },
+  );
 }
 
 function upstreamHeaders(): Headers {
@@ -211,10 +246,9 @@ function buildPostBody(action: Action, raw: JSONRecord): JSONRecord | NextRespon
 }
 
 async function route(request: NextRequest, method: "GET" | "POST") {
-  // SO_PROXY_TOKEN tidak wajib di .env: token fallback sudah ada di route.ts.
-  // Tetap wajib kirim Authorization: Bearer <token> atau X-SO-Token.
-  if (!authorized(request))
-    return jsonError("Unauthorized. Kirim Authorization: Bearer <SO_PROXY_TOKEN> atau X-SO-Token.", 401);
+  // API Key upstream tidak menggantikan token untuk akses API lokal.
+  // Browser: gunakan dialog Basic Auth. Fetch/curl: Bearer atau X-SO-Token.
+  if (!authorized(request)) return unauthorizedResponse();
 
   const actionName = request.nextUrl.searchParams.get("action") || "";
   if (!Object.prototype.hasOwnProperty.call(ACTIONS, actionName))

@@ -1,26 +1,22 @@
 /**
- * Next.js App Router — src/app/api/so/route.ts
+ * Entry SO / KKSO - Next.js App Router (server-only)
+ * URL: https://lautanapi.vercel.app/api/kapalapi
  *
- * Endpoint lokal: /api/so?action=<nama_action>
- * Semua request ke API Stock Opname dilewatkan dari server Next.js.
- * Konfigurasi API Key dan token proxy berada langsung di file SERVER ini.
- * Browser biasa tidak mengirim X-SO-Token: mendukung Basic Auth agar
- * kunjungan langsung ke URL akan memunculkan dialog login.
- * JANGAN menaruh file ini di folder frontend/client atau repositori publik.
+ * API untuk UI index.html:
+ *   GET  ?type=ping
+ *   GET  ?type=rack&storeId=M604&date=2026-10-12
+ *   GET  ?type=item&storeId=M604&date=2026-10-12&rack=ZR1
+ *   GET  ?type=cek&storeId=M604&date=2026-10-12&rack=ZR1&plu=262564
+ *   GET  ?type=saldo&storeId=M604&plu=262564
+ *   POST ?type=save  { kodeToko, dateSo, rakSo, data: [...] }
  *
- * API yang didukung (5 GET, 3 POST):
- * GET  get_rak_tx_stEntry  -> /api/so/entry_kkso/get_rak_tx_stEntry
- * GET  get_data_entry     -> /api/so/entry_kkso/get_data_entry
- * GET  get_all_plu        -> /api/so/cetak_kkso/get_all_plu
- * GET  cek_plu_rak_bebas  -> /api/so/cetak_kkso/cek_plu_rak_bebas
- * GET  check_date_entry   -> /api/so/entry_kkso/check_date_entry
- * POST save_entry_kkso    -> /api/so/entry_kkso/save_entry_kkso
- * POST save_per_item      -> /api/so/entry_kkso/save_per_item
- * POST save_data          -> /api/so/cetak_kkso/save_data
+ * Juga mendukung 8 action asli lewat ?action=... (lihat ACTIONS).
+ * Semua request data dan penyimpanan membutuhkan header X-SO-Token.
+ * Endpoint ping sengaja dapat diakses tanpa token untuk diagnostik.
  *
- * Catatan: bentuk parameter GET merujuk ke daftar endpoint sebelumnya;
- * payload POST save_per_item disesuaikan dengan tangkapan HTTP Request.
- * Detail payload endpoint POST lain perlu disesuaikan dengan request asli.
+ * Penting: nilai key/token bawaan dari konfigurasi terdahulu adalah RAHASIA.
+ * File ini hanya boleh berada pada sisi server. Untuk produksi, gunakan
+ * environment SO_API_KEY / SO_PROXY_TOKEN dan rotasi kredensial yang terlanjur tersebar.
  */
 
 import { timingSafeEqual } from "node:crypto";
@@ -29,280 +25,406 @@ import { NextRequest, NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const UPSTREAM_BASE =
-  (process.env.SO_API_BASE_URL || "https://app.alfastore.co.id/prd").replace(/\/$/, "");
+const UPSTREAM_BASE = (process.env.SO_API_BASE_URL || "https://app.alfastore.co.id/prd").replace(/\/+$/, "");
 const DEFAULT_STORE = "M604";
 
-/**
- * SERVER-ONLY: nilai dari request HTTP aplikasi yang diberikan pengguna.
- * Jangan ekspor konstanta ini ke client, log, atau respon API.
- * Disarankan pindah ke environment variable saat deployment produksi.
- */
+// Server-side only. Nilai dari capture permintaan Android yang diberikan pengguna.
+// Lebih aman mengisinya melalui Environment Variables Vercel, bukan Git publik.
 const INLINE_API_KEY = "iVOZX9MLmKrj1L8R23uF1aryMR1vGMXG";
 const INLINE_PROXY_TOKEN = "ByTHMADlaSRKAdW21AO5A5ojGywwiZEuoaKPI8q1qG2MVodz";
-const INLINE_BRANCH_ID = "MZ01"; // Branch-Id pada screenshot; bukan Store ID.
-const INLINE_ANDROID_ID = "712f8db18eeb1816"; // Androidid dan Mac-Addr pada screenshot.
-
+const INLINE_BRANCH_ID = "MZ01";
+const INLINE_ANDROID_ID = "712f8db18eeb1816";
 
 const ACTIONS = {
-  get_rak_tx_stEntry: {
-    method: "GET",
-    path: "/api/so/entry_kkso/get_rak_tx_stEntry",
-  },
-  get_data_entry: {
-    method: "GET",
-    path: "/api/so/entry_kkso/get_data_entry",
-  },
-  get_all_plu: {
-    method: "GET",
-    path: "/api/so/cetak_kkso/get_all_plu",
-  },
-  cek_plu_rak_bebas: {
-    method: "GET",
-    path: "/api/so/cetak_kkso/cek_plu_rak_bebas",
-  },
-  check_date_entry: {
-    method: "GET",
-    path: "/api/so/entry_kkso/check_date_entry",
-  },
-  save_entry_kkso: {
-    method: "POST",
-    path: "/api/so/entry_kkso/save_entry_kkso",
-  },
-  save_per_item: {
-    method: "POST",
-    path: "/api/so/entry_kkso/save_per_item",
-  },
-  save_data: {
-    method: "POST",
-    path: "/api/so/cetak_kkso/save_data",
-  },
+  get_rak_tx_stEntry: { method: "GET", path: "/api/so/entry_kkso/get_rak_tx_stEntry" },
+  get_data_entry: { method: "GET", path: "/api/so/entry_kkso/get_data_entry" },
+  get_all_plu: { method: "GET", path: "/api/so/cetak_kkso/get_all_plu" },
+  cek_plu_rak_bebas: { method: "GET", path: "/api/so/cetak_kkso/cek_plu_rak_bebas" },
+  check_date_entry: { method: "GET", path: "/api/so/entry_kkso/check_date_entry" },
+  save_entry_kkso: { method: "POST", path: "/api/so/entry_kkso/save_entry_kkso" },
+  save_per_item: { method: "POST", path: "/api/so/entry_kkso/save_per_item" },
+  save_data: { method: "POST", path: "/api/so/cetak_kkso/save_data" },
 } as const;
 
 type Action = keyof typeof ACTIONS;
-type JSONRecord = Record<string, unknown>;
+type Dict = Record<string, unknown>;
 
-function isRecord(value: unknown): value is JSONRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function isRecord(value: unknown): value is Dict {
+  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-function jakartaDate(format: "iso" | "dmy"): string {
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Asia/Jakarta",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date());
-  const get = (part: "day" | "month" | "year") =>
-    parts.find((x) => x.type === part)?.value || "";
-  const dd = get("day");
-  const mm = get("month");
-  const yyyy = get("year");
-  return format === "iso" ? `${yyyy}-${mm}-${dd}` : `${dd}-${mm}-${yyyy}`;
+function str(value: unknown): string {
+  return value == null ? "" : String(value).trim();
 }
 
-function jsonError(message: string, status: number) {
-  return NextResponse.json({ ok: false, error: message }, { status });
-}
-
-/** Token khusus untuk mengakses proxy, *bukan* Api-Key milik server SO. */
-function authorized(request: NextRequest): boolean {
-  const secret = process.env.SO_PROXY_TOKEN || INLINE_PROXY_TOKEN;
-  const authorization = request.headers.get("authorization") || "";
-  const bearer = authorization.match(/^Bearer\s+(.+)$/i)?.[1];
-  let basicToken: string | undefined;
-
-  // Tambahan: Chrome/browser dapat memunculkan dialog login HTTP Basic.
-  // Username: so; Password: nilai SO_PROXY_TOKEN / INLINE_PROXY_TOKEN.
-  const basic = authorization.match(/^Basic\s+([A-Za-z0-9+/=]+)$/i)?.[1];
-  if (basic) {
-    try {
-      const credentials = Buffer.from(basic, "base64").toString("utf8");
-      if (credentials.startsWith("so:")) basicToken = credentials.slice(3);
-    } catch {
-      // Kredensial tidak valid.
-    }
+function first(obj: Dict, keys: string[]): unknown {
+  for (const key of keys) {
+    const val = obj[key];
+    if (val !== undefined && val !== null && val !== "") return val;
   }
-
-  const supplied = bearer || request.headers.get("x-so-token") || basicToken || "";
-  const a = Buffer.from(secret, "utf8");
-  const b = Buffer.from(supplied, "utf8");
-  return a.length === b.length && timingSafeEqual(a, b);
+  return undefined;
 }
 
-function unauthorizedResponse() {
-  // WWW-Authenticate mengizinkan browser meminta username/password
-  // alih-alih hanya menampilkan JSON Unauthorized.
-  return NextResponse.json(
-    {
-      ok: false,
-      error: "Unauthorized. Gunakan X-SO-Token, Authorization: Bearer, atau login Basic (username: so, password: token proxy).",
-    },
-    {
-      status: 401,
-      headers: {
-        "WWW-Authenticate": 'Basic realm="Entry SO Proxy", charset="UTF-8"',
-        "Cache-Control": "no-store",
-      },
-    },
-  );
+function jakartaISO(): string {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Jakarta", day: "2-digit", month: "2-digit", year: "numeric",
+  }).formatToParts(new Date());
+  const p = (kind: "day" | "month" | "year") => parts.find(x => x.type === kind)?.value || "";
+  return `${p("year")}-${p("month")}-${p("day")}`;
+}
+
+function dateISO(value: unknown): string | null {
+  const input = str(value) || jakartaISO();
+  let dd: string, mm: string, yyyy: string;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(input)) {
+    [yyyy, mm, dd] = input.split("-");
+  } else if (/^\d{2}-\d{2}-\d{4}$/.test(input)) {
+    [dd, mm, yyyy] = input.split("-");
+  } else return null;
+  const d = new Date(`${yyyy}-${mm}-${dd}T12:00:00Z`);
+  if (!Number.isFinite(d.getTime()) || d.toISOString().slice(0, 10) !== `${yyyy}-${mm}-${dd}`) return null;
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function dateDMY(value: unknown): string | null {
+  const iso = dateISO(value);
+  return iso ? `${iso.slice(8, 10)}-${iso.slice(5, 7)}-${iso.slice(0, 4)}` : null;
+}
+
+function corsHeaders(): Headers {
+  return new Headers({
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, X-SO-Token, Authorization",
+    "Access-Control-Max-Age": "86400",
+    "Cache-Control": "no-store",
+  });
+}
+
+function reply(data: Dict, status = 200): NextResponse {
+  return NextResponse.json(data, { status, headers: corsHeaders() });
+}
+
+function fail(error: string, status = 400, detail?: unknown): NextResponse {
+  return reply({ ok: false, error, ...(detail === undefined ? {} : { detail }) }, status);
+}
+
+function authorized(request: NextRequest): boolean {
+  const expected = process.env.SO_PROXY_TOKEN || INLINE_PROXY_TOKEN;
+  const bearer = /^Bearer\s+(.+)$/i.exec(request.headers.get("authorization") || "")?.[1];
+  const supplied = request.headers.get("x-so-token") || bearer || "";
+  const lhs = Buffer.from(expected);
+  const rhs = Buffer.from(supplied);
+  return lhs.length === rhs.length && timingSafeEqual(lhs, rhs);
 }
 
 function upstreamHeaders(): Headers {
-  const h = new Headers({
-    "Api-Key": INLINE_API_KEY,
+  const result = new Headers({
+    "Api-Key": process.env.SO_API_KEY || INLINE_API_KEY,
+    "Branch-Id": process.env.SO_BRANCH_ID || INLINE_BRANCH_ID,
+    "Androidid": process.env.SO_ANDROID_ID || INLINE_ANDROID_ID,
+    "Mac-Addr": process.env.SO_MAC_ADDR || process.env.SO_ANDROID_ID || INLINE_ANDROID_ID,
     Platform: "ANDROID",
     Accept: "application/json",
     "Content-Type": "application/json; charset=utf-8",
   });
-
-  // Header bawaan sesuai contoh tangkapan HTTP Request; bisa diganti via environment.
-  h.set("Branch-Id", process.env.SO_BRANCH_ID || INLINE_BRANCH_ID);
-  h.set("Androidid", process.env.SO_ANDROID_ID || INLINE_ANDROID_ID);
-  h.set("Mac-Addr", process.env.SO_MAC_ADDR || process.env.SO_ANDROID_ID || INLINE_ANDROID_ID);
-  if (process.env.SO_UPSTREAM_AUTHORIZATION)
-    h.set("Authorization", process.env.SO_UPSTREAM_AUTHORIZATION);
-  return h;
+  if (process.env.SO_UPSTREAM_AUTHORIZATION) result.set("Authorization", process.env.SO_UPSTREAM_AUTHORIZATION);
+  return result;
 }
 
-/** Hanya meneruskan parameter yang relevan untuk masing-masing endpoint. */
-function buildGetURL(action: Action, request: NextRequest): URL | NextResponse {
-  const input = request.nextUrl.searchParams;
-  const url = new URL(`${UPSTREAM_BASE}${ACTIONS[action].path}`);
-  const storeId = input.get("storeId") || input.get("kodeToko") || DEFAULT_STORE;
-  const dateSo = input.get("dateSo") || jakartaDate("iso");
-  const rack = input.get("rakSo") || input.get("rack") || "";
-  const plu = input.get("pluBarcode") || input.get("plu") || "";
-  const add = (key: string, value: string | null | undefined) => {
-    if (value !== null && value !== undefined && value !== "")
-      url.searchParams.set(key, value);
-  };
+function requestStore(params: URLSearchParams): string {
+  return str(params.get("storeId") || params.get("kodeToko") || DEFAULT_STORE).toUpperCase();
+}
+
+function requestRack(params: URLSearchParams): string {
+  return str(params.get("rack") || params.get("rakSo"));
+}
+
+function requestPlu(params: URLSearchParams): string {
+  return str(params.get("plu") || params.get("pluBarcode"));
+}
+
+function requestDate(params: URLSearchParams): string | null {
+  return dateISO(params.get("date") || params.get("dateSo"));
+}
+
+function setIf(url: URL, key: string, value: string | null) {
+  if (value) url.searchParams.set(key, value);
+}
+
+function buildUpstreamURL(action: Action, params: URLSearchParams): URL | NextResponse {
+  const url = new URL(UPSTREAM_BASE + ACTIONS[action].path);
+  const store = requestStore(params);
+  const date = requestDate(params);
+  const rack = requestRack(params);
+  const plu = requestPlu(params);
+  if (!date) return fail("Tanggal tidak valid. Gunakan yyyy-MM-dd atau dd-MM-yyyy.");
 
   switch (action) {
     case "get_rak_tx_stEntry":
-      add("storeId", storeId);
-      add("dateSo", dateSo);
+      url.searchParams.set("storeId", store);
+      url.searchParams.set("dateSo", date);
       break;
-
     case "get_data_entry":
-      if (!rack) return jsonError("Parameter rakSo atau rack wajib diisi.", 400);
-      add("kodeToko", storeId);
-      add("dateSo", dateSo);
-      add("rakSo", rack);
+      if (!rack) return fail("Pilih rack terlebih dahulu.");
+      url.searchParams.set("kodeToko", store);
+      url.searchParams.set("dateSo", date);
+      url.searchParams.set("rakSo", rack);
       break;
-
     case "get_all_plu":
-      // Parameter disimpulkan dari daftar endpoint; verifikasi dengan traffic asli.
-      if (!rack) return jsonError("Parameter rakSo atau rack wajib diisi.", 400);
-      add("rakSo", rack);
-      add("typeSo", input.get("typeSo"));
-      add("kodeToko", storeId);
-      add("userName", input.get("userName"));
+      if (!rack) return fail("Parameter rack wajib diisi.");
+      url.searchParams.set("rakSo", rack);
+      url.searchParams.set("kodeToko", store);
+      setIf(url, "typeSo", params.get("typeSo"));
+      setIf(url, "userName", params.get("userName"));
+      // Bentuk param get_all_plu belum diverifikasi dari tangkapan jaringan.
       break;
-
     case "cek_plu_rak_bebas":
-      if (!rack || !plu) return jsonError("Parameter rakSo dan pluBarcode wajib diisi.", 400);
-      add("storeId", storeId);
-      add("dateSo", dateSo);
-      add("rakSo", rack);
-      add("pluBarcode", plu);
-      add("menuList", input.get("menuList"));
-      add("lang", input.get("lang"));
-      add("deviceType", input.get("deviceType") || "pda");
-      add("userSo", input.get("userSo"));
+      if (!rack || !plu) return fail("Parameter rack dan plu wajib diisi.");
+      url.searchParams.set("storeId", store);
+      url.searchParams.set("dateSo", date);
+      url.searchParams.set("rakSo", rack);
+      url.searchParams.set("pluBarcode", plu);
+      setIf(url, "menuList", params.get("menuList"));
+      setIf(url, "lang", params.get("lang"));
+      url.searchParams.set("deviceType", params.get("deviceType") || "pda");
+      setIf(url, "userSo", params.get("userSo"));
       break;
-
     case "check_date_entry":
-      add("storeId", storeId);
-      add("menuList", input.get("menuList"));
+      url.searchParams.set("storeId", store);
+      setIf(url, "menuList", params.get("menuList"));
       break;
-
     default:
-      return jsonError("Action tidak mendukung GET.", 405);
+      return fail("Action bukan metode GET.", 405);
   }
   return url;
 }
 
-function buildPostBody(action: Action, raw: JSONRecord): JSONRecord | NextResponse {
-  // Gunakan format tanggal dd-MM-yyyy sesuai screenshot request save_per_item.
-  // Format default GET memakai yyyy-MM-dd mengikuti daftar URL sebelumnya.
-  const body: JSONRecord = { ...raw };
-
-  if (action === "save_per_item") {
-    if (typeof body.kodeToko !== "string" || !body.kodeToko) body.kodeToko = DEFAULT_STORE;
-    if (typeof body.dateSo !== "string" || !body.dateSo) body.dateSo = jakartaDate("dmy");
-    if (typeof body.rakSo !== "string" || !body.rakSo)
-      return jsonError("Field rakSo wajib diisi.", 400);
-    if (!Array.isArray(body.data) || body.data.length === 0)
-      return jsonError("Field data wajib berupa array berisi item SO.", 400);
-  } else if (action === "save_entry_kkso") {
-    if (typeof body.storeId !== "string" || !body.storeId) body.storeId = DEFAULT_STORE;
-    if (typeof body.dateSo !== "string" || !body.dateSo) body.dateSo = jakartaDate("dmy");
-    if (!Array.isArray(body.data))
-      return jsonError("Field data wajib berupa array item SO.", 400);
+async function upstreamFetch(url: URL, method: "GET" | "POST", body?: Dict) {
+  const res = await fetch(url, {
+    method,
+    headers: upstreamHeaders(),
+    body: body ? JSON.stringify(body) : undefined,
+    cache: "no-store",
+    signal: AbortSignal.timeout(24000),
+  });
+  const raw = await res.text();
+  let data: unknown = raw;
+  if (raw) {
+    try { data = JSON.parse(raw); } catch { /* text/html response kept */ }
   }
-  // save_data: struktur body belum terkonfirmasi; kirim persis seperti input.
-  return body;
+  return { status: res.status, httpOK: res.ok, data };
 }
 
-async function route(request: NextRequest, method: "GET" | "POST") {
-  // API Key upstream tidak menggantikan token untuk akses API lokal.
-  // Browser: gunakan dialog Basic Auth. Fetch/curl: Bearer atau X-SO-Token.
-  if (!authorized(request)) return unauthorizedResponse();
+function upstreamError(data: unknown): string | null {
+  if (!isRecord(data)) return null;
+  if (data.ok === false || data.success === false || data.status === false) {
+    return str(first(data, ["message", "error", "msg", "pesan"])) || "Upstream melaporkan operasi gagal.";
+  }
+  return null;
+}
 
-  const actionName = request.nextUrl.searchParams.get("action") || "";
-  if (!Object.prototype.hasOwnProperty.call(ACTIONS, actionName))
-    return jsonError(`Action tidak dikenal: ${actionName}`, 404);
-  const action = actionName as Action;
-  if (ACTIONS[action].method !== method)
-    return jsonError(`Gunakan metode ${ACTIONS[action].method} untuk action ini.`, 405);
-
-  const target = method === "GET"
-    ? buildGetURL(action, request)
-    : new URL(`${UPSTREAM_BASE}${ACTIONS[action].path}`);
-  if (target instanceof NextResponse) return target;
-
-  let body: string | undefined;
-  if (method === "POST") {
-    let raw: unknown;
-    try {
-      raw = await request.json();
-    } catch {
-      return jsonError("Body harus JSON valid.", 400);
+function arrayFrom(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value;
+  if (!isRecord(value)) return [];
+  for (const key of ["data", "items", "result", "results", "rows", "list", "payload"]) {
+    if (Array.isArray(value[key])) return value[key] as unknown[];
+    if (isRecord(value[key])) {
+      const nested = arrayFrom(value[key]);
+      if (nested.length) return nested;
     }
-    if (!isRecord(raw)) return jsonError("Body harus JSON object.", 400);
-    const result = buildPostBody(action, raw);
-    if (result instanceof NextResponse) return result;
-    body = JSON.stringify(result);
   }
+  return [];
+}
 
-  try {
-    const upstream = await fetch(target, {
-      method,
-      headers: upstreamHeaders(),
-      body,
-      cache: "no-store",
-      signal: AbortSignal.timeout(20000),
-    });
-    const responseBytes = await upstream.arrayBuffer();
-    const responseHeaders = new Headers({
-      "Cache-Control": "no-store",
-      "Content-Type": upstream.headers.get("content-type") || "application/octet-stream",
-    });
-    return new NextResponse(responseBytes, {
-      status: upstream.status,
-      statusText: upstream.statusText,
-      headers: responseHeaders,
-    });
-  } catch {
-    return jsonError("Gagal menghubungi server Stock Opname (atau waktu habis).", 502);
+function normalizeRack(value: unknown): Dict | null {
+  if (typeof value === "string" || typeof value === "number") {
+    const v = str(value);
+    return v ? { rack_no: v, rack_name: "RAK" } : null;
   }
+  if (!isRecord(value)) return null;
+  const rack = str(first(value, ["rack_no", "rackNo", "rakSo", "rack", "rak", "kodeRak", "kode_rak", "kode", "RACK_NO"]));
+  if (!rack) return null;
+  return { ...value, rack_no: rack, rack_name: str(first(value, ["rack_name", "rackName", "namaRak", "nama", "description", "descp"])) || "RAK" };
+}
+
+function normalizeItem(value: unknown): Dict | null {
+  if (!isRecord(value)) return null;
+  const plu = first(value, ["plu", "PLU", "plu_no", "pluNo", "article_code", "kode"]);
+  if (plu === undefined) return null;
+  return {
+    ...value,
+    plu,
+    item_descp: str(first(value, ["item_descp", "descp", "description", "nama", "item_name", "nama_barang", "item_desc"])) || "-",
+    barcode: str(first(value, ["barcode", "barcode_no"])) || "0",
+    qty: Number(first(value, ["qty", "QTY"]) ?? 0) || 0,
+    avg_cost: Number(first(value, ["avg_cost", "avgCost"]) ?? 0) || 0,
+    tag: str(first(value, ["tag", "f_tag"])) || "K",
+  };
+}
+
+function getItemFromResponse(payload: unknown, plu: string): Dict | null {
+  const rows = arrayFrom(payload);
+  for (const value of rows) {
+    const item = normalizeItem(value);
+    if (item && (str(item.plu) === plu || (str(item.barcode) !== "0" && str(item.barcode) === plu))) return item;
+  }
+  if (isRecord(payload)) {
+    const nested = isRecord(payload.data) ? payload.data : payload;
+    const item = normalizeItem(nested);
+    if (item && (str(item.plu) === plu || (str(item.barcode) !== "0" && str(item.barcode) === plu))) return item;
+  }
+  return null;
+}
+
+function normalizedSOItem(raw: unknown): Dict | null {
+  if (!isRecord(raw)) return null;
+  const p = first(raw, ["plu", "PLU", "article_code"]);
+  if (p === undefined) return null;
+  const plu = str(p);
+  const qty = Number(first(raw, ["qty", "QTY"]) ?? 0);
+  if (!plu || !Number.isFinite(qty) || qty < 0) return null;
+  return {
+    plu: /^\d+$/.test(plu) ? Number(plu) : plu,
+    descp: str(first(raw, ["descp", "item_descp", "description", "nama"])) || "",
+    conv1: Number(raw.conv1 ?? 0),
+    conv2: Number(raw.conv2 ?? 0),
+    subdept: Number(raw.subdept ?? 0),
+    barcode: str(raw.barcode ?? "0"),
+    tag: str(raw.tag ?? "K"),
+    qty: String(qty),
+    avg_cost: Number(raw.avg_cost ?? 0),
+  };
+}
+
+function buildSaveBody(action: Action, body: Dict): Dict | NextResponse {
+  if (action === "save_data") return body; // bentuk payload endpoint ini belum terverifikasi
+  const store = str(body.kodeToko ?? body.storeId ?? DEFAULT_STORE).toUpperCase();
+  const date = dateDMY(body.dateSo ?? body.date);
+  if (!date) return fail("dateSo tidak valid. Gunakan yyyy-MM-dd atau dd-MM-yyyy.");
+  if (!Array.isArray(body.data) || !body.data.length) return fail("data wajib array item yang tidak kosong.");
+  if (action === "save_per_item") {
+    const rack = str(body.rakSo ?? body.rack);
+    if (!rack) return fail("rakSo / rack wajib diisi.");
+    const items = body.data.map(normalizedSOItem);
+    if (items.some(x => !x)) return fail("PLU atau QTY ada yang tidak valid.");
+    return { kodeToko: store, dateSo: date, rakSo: rack, data: items };
+  }
+  // save_entry_kkso punya payload berbeda; pertahankan field dari pemanggil.
+  return { ...body, storeId: store, dateSo: date };
+}
+
+/** Optional: saldo menggunakan sumber yang sama seperti HTML pengguna sebelumnya. */
+async function getSaldo(store: string, plu: string): Promise<Dict> {
+  const SOURCE = process.env.SO_SALDO_SOURCE_URL || "https://kalkulatorsaya.my.id/api/report/Saldo_proxy.php";
+  const url = new URL(SOURCE);
+  url.searchParams.set("storeId", store);
+  url.searchParams.set("plu", plu);
+  const res = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(15000) });
+  if (!res.ok) return { ok: false, error: `Sumber OH membalas HTTP ${res.status}`, data: null };
+  const raw = await res.text();
+  try {
+    const j: unknown = JSON.parse(raw);
+    if (isRecord(j)) {
+      const v = first(j, ["saldo", "oh", "on_hand", "onHand"])
+        ?? (isRecord(j.data) ? first(j.data, ["saldo", "oh", "on_hand", "onHand"]) : undefined);
+      if (v !== undefined && Number.isFinite(Number(v))) return { ok: true, saldo: Number(v) };
+    }
+  } catch { /* table HTML */ }
+  // Parser ringan untuk respons tabel saldo terdahulu: kolom PLU ke-2, OH ke-9.
+  for (const row of raw.match(/<tr\b[^>]*>[\s\S]*?<\/tr>/gi) || []) {
+    const cells = Array.from(row.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi), x =>
+      x[1].replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " ").trim());
+    if (cells.length >= 9 && cells[1].replace(/^0+/, "") === plu.replace(/^0+/, "")) {
+      const parsed = Number(cells[8].replace(/,/g, "").trim());
+      if (Number.isFinite(parsed)) return { ok: true, saldo: parsed };
+    }
+  }
+  return { ok: true, saldo: null, message: "OH tidak ditemukan pada sumber data." };
+}
+
+export async function OPTIONS() {
+  return new NextResponse(null, { status: 204, headers: corsHeaders() });
 }
 
 export async function GET(request: NextRequest) {
-  return route(request, "GET");
+  const params = request.nextUrl.searchParams;
+  const type = str(params.get("type") || params.get("action") || "ping");
+  if (type === "ping") {
+    return reply({ ok: true, service: "ENTRY SO / kapalapi", dateWIB: jakartaISO(),
+      usage: "Gunakan ?type=rack|item|cek|saldo atau POST ?type=save; sertakan X-SO-Token." });
+  }
+  if (!authorized(request)) return fail("Token API tidak valid. Isi X-SO-Token pada aplikasi Entry SO.", 401);
+  if (type === "saldo") {
+    const plu = requestPlu(params);
+    if (!plu) return fail("Parameter plu wajib diisi.");
+    try { return reply(await getSaldo(requestStore(params), plu)); }
+    catch { return fail("Gagal mengambil OH dari sumber saldo.", 502); }
+  }
+
+  const aliases: Record<string, Action> = {
+    rack: "get_rak_tx_stEntry", item: "get_data_entry", cek: "cek_plu_rak_bebas",
+  };
+  const action = (aliases[type] || type) as Action;
+  if (!(action in ACTIONS)) return fail(`Type/action tidak dikenal: ${type}`, 404);
+  if (ACTIONS[action].method !== "GET") return fail("Endpoint ini harus POST.", 405);
+  const url = buildUpstreamURL(action, params);
+  if (url instanceof NextResponse) return url;
+
+  try {
+    const fetched = await upstreamFetch(url, "GET");
+    if (!fetched.httpOK) return fail(`Server Stock Opname membalas HTTP ${fetched.status}`, fetched.status >= 400 && fetched.status <= 599 ? fetched.status : 502, fetched.data);
+    const err = upstreamError(fetched.data);
+    if (err) return fail(err, 422, fetched.data);
+    if (type === "rack") {
+      const rows = arrayFrom(fetched.data).map(normalizeRack).filter((r): r is Dict => !!r);
+      return reply({ ok: true, data: rows, count: rows.length });
+    }
+    if (type === "item") {
+      const rows = arrayFrom(fetched.data).map(normalizeItem).filter((r): r is Dict => !!r);
+      return reply({ ok: true, data: rows, count: rows.length });
+    }
+    if (type === "cek") {
+      const plu = requestPlu(params);
+      let item = getItemFromResponse(fetched.data, plu);
+      if (!item) {
+        // Beberapa server hanya mengembalikan status cek PLU, bukan detailnya.
+        const itemURL = buildUpstreamURL("get_data_entry", params);
+        if (itemURL instanceof URL) {
+          const more = await upstreamFetch(itemURL, "GET");
+          if (more.httpOK && !upstreamError(more.data)) item = getItemFromResponse(more.data, plu);
+        }
+      }
+      if (!item) return reply({ ok: false, error: `PLU ${plu} tidak ada dalam data rack atau response tidak berisi detail item.`, data: null }, 404);
+      return reply({ ok: true, data: item });
+    }
+    return reply({ ok: true, data: fetched.data });
+  } catch {
+    return fail("Gagal menghubungi server Stock Opname atau waktu tunggu habis.", 502);
+  }
 }
 
 export async function POST(request: NextRequest) {
-  return route(request, "POST");
+  if (!authorized(request)) return fail("Token API tidak valid. Isi X-SO-Token pada aplikasi Entry SO.", 401);
+  const params = request.nextUrl.searchParams;
+  const type = str(params.get("type") || params.get("action") || "");
+  const action: Action = type === "save" ? "save_per_item" : type as Action;
+  if (!(action in ACTIONS)) return fail(`Type/action tidak dikenal: ${type}`, 404);
+  if (ACTIONS[action].method !== "POST") return fail("Endpoint ini harus GET.", 405);
+  let body: unknown;
+  try { body = await request.json(); }
+  catch { return fail("Request body harus JSON valid."); }
+  if (!isRecord(body)) return fail("Request body harus JSON object.");
+  const data = buildSaveBody(action, body);
+  if (data instanceof NextResponse) return data;
+  try {
+    const url = new URL(UPSTREAM_BASE + ACTIONS[action].path);
+    const fetched = await upstreamFetch(url, "POST", data);
+    if (!fetched.httpOK) return fail(`Server Stock Opname membalas HTTP ${fetched.status}`, fetched.status >= 400 && fetched.status <= 599 ? fetched.status : 502, fetched.data);
+    const err = upstreamError(fetched.data);
+    if (err) return fail(err, 422, fetched.data);
+    return reply({ ok: true, message: "Server mengembalikan HTTP sukses; periksa data respons untuk status bisnis.", data: fetched.data });
+  } catch {
+    return fail("Gagal menyimpan ke server Stock Opname atau waktu tunggu habis.", 502);
+  }
 }

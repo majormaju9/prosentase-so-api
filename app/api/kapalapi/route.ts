@@ -3,7 +3,8 @@
  *
  * Endpoint lokal: /api/so?action=<nama_action>
  * Semua request ke API Stock Opname dilewatkan dari server Next.js.
- * Kredensial API disimpan di .env.local (JANGAN ditaruh di frontend).
+ * Konfigurasi API Key dan token proxy berada langsung di file SERVER ini.
+ * JANGAN menaruh file ini di folder frontend/client atau repositori publik.
  *
  * API yang didukung (5 GET, 3 POST):
  * GET  get_rak_tx_stEntry  -> /api/so/entry_kkso/get_rak_tx_stEntry
@@ -28,7 +29,18 @@ export const dynamic = "force-dynamic";
 
 const UPSTREAM_BASE =
   (process.env.SO_API_BASE_URL || "https://app.alfastore.co.id/prd").replace(/\/$/, "");
-const DEFAULT_STORE = process.env.SO_DEFAULT_STORE_ID || "M604";
+const DEFAULT_STORE = "M604";
+
+/**
+ * SERVER-ONLY: nilai dari request HTTP aplikasi yang diberikan pengguna.
+ * Jangan ekspor konstanta ini ke client, log, atau respon API.
+ * Disarankan pindah ke environment variable saat deployment produksi.
+ */
+const INLINE_API_KEY = "iVOZX9MLmKrj1L8R23uF1aryMR1vGMXG";
+const INLINE_PROXY_TOKEN = "ByTHMADlaSRKAdW21AO5A5ojGywwiZEuoaKPI8q1qG2MVodz";
+const INLINE_BRANCH_ID = "MZ01"; // Branch-Id pada screenshot; bukan Store ID.
+const INLINE_ANDROID_ID = "712f8db18eeb1816"; // Androidid dan Mac-Addr pada screenshot.
+
 
 const ACTIONS = {
   get_rak_tx_stEntry: {
@@ -93,8 +105,7 @@ function jsonError(message: string, status: number) {
 
 /** Token khusus untuk mengakses proxy, *tidak sama* dengan API Key upstream. */
 function authorized(request: NextRequest): boolean {
-  const secret = process.env.SO_PROXY_TOKEN;
-  if (!secret) return false; // Fail closed: proxy tidak boleh terbuka ke publik.
+  const secret = process.env.SO_PROXY_TOKEN || INLINE_PROXY_TOKEN;
   const bearer = request.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1];
   const supplied = bearer || request.headers.get("x-so-token") || "";
   const a = Buffer.from(secret);
@@ -104,20 +115,16 @@ function authorized(request: NextRequest): boolean {
 
 function upstreamHeaders(): Headers {
   const h = new Headers({
-    "Api-Key": process.env.SO_API_KEY || "",
+    "Api-Key": INLINE_API_KEY,
     Platform: "ANDROID",
     Accept: "application/json",
     "Content-Type": "application/json; charset=utf-8",
   });
 
-  // Nilai opsional; gunakan hanya data/kredensial yang diizinkan oleh pemilik sistem.
-  if (process.env.SO_BRANCH_ID) h.set("Branch-Id", process.env.SO_BRANCH_ID);
-  if (process.env.SO_ANDROID_ID) {
-    h.set("Androidid", process.env.SO_ANDROID_ID);
-    h.set("Mac-Addr", process.env.SO_MAC_ADDR || process.env.SO_ANDROID_ID);
-  } else if (process.env.SO_MAC_ADDR) {
-    h.set("Mac-Addr", process.env.SO_MAC_ADDR);
-  }
+  // Header bawaan sesuai contoh tangkapan HTTP Request; bisa diganti via environment.
+  h.set("Branch-Id", process.env.SO_BRANCH_ID || INLINE_BRANCH_ID);
+  h.set("Androidid", process.env.SO_ANDROID_ID || INLINE_ANDROID_ID);
+  h.set("Mac-Addr", process.env.SO_MAC_ADDR || process.env.SO_ANDROID_ID || INLINE_ANDROID_ID);
   if (process.env.SO_UPSTREAM_AUTHORIZATION)
     h.set("Authorization", process.env.SO_UPSTREAM_AUTHORIZATION);
   return h;
@@ -204,11 +211,10 @@ function buildPostBody(action: Action, raw: JSONRecord): JSONRecord | NextRespon
 }
 
 async function route(request: NextRequest, method: "GET" | "POST") {
-  if (!process.env.SO_PROXY_TOKEN)
-    return jsonError("Server belum dikonfigurasi: SO_PROXY_TOKEN.", 503);
-  if (!authorized(request)) return jsonError("Unauthorized.", 401);
-  if (!process.env.SO_API_KEY)
-    return jsonError("Server belum dikonfigurasi: SO_API_KEY.", 503);
+  // SO_PROXY_TOKEN tidak wajib di .env: token fallback sudah ada di route.ts.
+  // Tetap wajib kirim Authorization: Bearer <token> atau X-SO-Token.
+  if (!authorized(request))
+    return jsonError("Unauthorized. Kirim Authorization: Bearer <SO_PROXY_TOKEN> atau X-SO-Token.", 401);
 
   const actionName = request.nextUrl.searchParams.get("action") || "";
   if (!Object.prototype.hasOwnProperty.call(ACTIONS, actionName))

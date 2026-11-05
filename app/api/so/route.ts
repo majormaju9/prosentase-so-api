@@ -175,7 +175,8 @@ function normalizeItem(raw: unknown): Dict | null {
 }
 
 async function upstream(mode: Mode, storeId: string, params: URLSearchParams, body?: Dict) {
-  const url = new URL(ROUTES[mode], BASE);
+  // Gabungkan URL secara eksplisit agar prefix /prd tidak hilang.
+  const url = new URL(BASE + ROUTES[mode]);
   for (const [key, value] of params) url.searchParams.set(key, value);
   let res: Response;
   try {
@@ -208,6 +209,7 @@ async function upstream(mode: Mode, storeId: string, params: URLSearchParams, bo
       success: false,
       error: `API sumber HTTP ${res.status}`,
       upstreamStatus: res.status,
+      upstreamPath: url.pathname,
       message: data ? getError(data) : undefined,
     }, 502);
   }

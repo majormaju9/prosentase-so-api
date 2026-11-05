@@ -2,7 +2,8 @@
  * Satu Route Handler Next.js untuk Entry KKSO.
  * URL browser: /api/so?type=rack|item|cek|save
  * Sumber upstream: app.alfastore.co.id — endpoint rak, item, dan simpan.
- * Cek PLU memakai daftar item rak, tidak mengirim permintaan cek PLU rak bebas.
+ * Cek PLU memakai daftar item rak dan memeriksa indikasi status SO.
+ * GET type=save hanya petunjuk, penyimpanan tetap POST dengan validasi status SO.
  * Tanpa SO_PROXY_PASSWORD. Untuk pemakaian publik wajib tambahkan autentikasi pengguna
  * dan pembatasan akses di luar route ini agar API key server tidak disalahgunakan.
  *
@@ -243,6 +244,116 @@ async function upstream(mode: Mode, storeId: string, params: URLSearchParams, bo
 }
 
 /**
+ * Validasi status SO defensif berdasarkan atribut respons get_data_entry.
+ * Mapping kode st_flag belum terverifikasi sebagai aturan resmi server.
+ * Nilai 3 diblokir SEBAGAI PENGAMAN karena pada contoh M2J8/AC7/990091
+ * ditemukan st_flag=3 bersamaan dengan peringatan "PLU Sudah Dilakukan Proses SO"
+ * di proxy lama. Nilai selain 3 tidak otomatis dinyatakan belum diproses.
+ * Opsional: SO_BLOCK_ST_FLAGS=3,4 jika sudah dikonfirmasi dari aturan resmi.
+ */
+function inspectSOStatus(raw: unknown): { blocked: boolean; reason: string | null; statusFlag: string | null; checked: boolean } {
+  const obj = asRecord(raw);
+  if (!obj) return { blocked: false, reason: null, statusFlag: null, checked: false };
+  const flagRaw = pick(obj, ['st_flag', 'ST_FLAG', 'stFlag']);
+  const flag = flagRaw === undefined ? null : String(flagRaw).trim();
+  const blockedFlags = (env('SO_BLOCK_ST_FLAGS') || '3')
+    .split(/[\s,;]+/).map((x) => x.trim()).filter(Boolean);
+  if (flag !== null && blockedFlags.includes(flag)) {
+    return { blocked: true, reason: `st_flag=${flag} terindikasi sudah diproses SO`, statusFlag: flag, checked: true };
+  }
+
+  const doneFields = ['is_so_done', 'isSoDone', 'so_processed', 'soProcessed', 'already_so', 'alreadySO'];
+  for (const key of doneFields) {
+    const val = obj[key];
+    if (val === true || val === 1 || val === '1' || val === 'true') {
+      return { blocked: true, reason: `${key} menunjukkan sudah diproses SO`, statusFlag: flag, checked: true };
+    }
+  }
+
+  const statusText = pick(obj, [
+    'so_message', 'soMessage', 'message_so', 'message', 'msg',
+    'status_so', 'so_status', 'statusEntry', 'status_entry', 'keterangan_so',
+  ]);
+  if (typeof statusText === 'string') {
+    const text = statusText.toLowerCase().replace(/[_-]/g, ' ');
+    // Jangan salah menandai "belum diproses" sebagai sudah diproses.
+    if (!/\b(belum|tidak|not|pending)\b/.test(text) &&
+      /(sudah.{0,35}(?:proses|diproses|so|selesai)|(?:so|stock opname).{0,25}(?:selesai|diproses|sudah)|already.{0,20}(?:process|count)|processed so)/i.test(text)) {
+      return { blocked: true, reason: String(statusText).slice(0, 150), statusFlag: flag, checked: true };
+    }
+  }
+  return {
+    blocked: false,
+    reason: null,
+    statusFlag: flag,
+    checked: flag !== null || typeof statusText === 'string',
+  };
+}
+
+/**
+ * Validasi semua PLU sebelum POST simpan. Mengambil data terbaru dari sumber;
+ * GAGAL tertutup bila status tidak bisa dicek, barang tak ditemukan, atau
+ * ada indikasi sudah proses SO. Tidak mengubah endpoint/item/save yang lama.
+ * Ini belum bisa menjamin tidak ada perubahan status antara cek dan simpan;
+ * validasi final tetap harus ada di sistem sumber.
+ */
+async function validateBeforeSave(storeId: string, dateSo: string, items: Dict[]): Promise<Response | null> {
+  const byRack = new Map<string, Dict[]>();
+  for (const item of items) {
+    const rack = String(item.rack);
+    const group = byRack.get(rack) || [];
+    group.push(item);
+    byRack.set(rack, group);
+  }
+  if (byRack.size > 12) {
+    return response({ success: false, error: 'Maksimal 12 rak per permintaan simpan untuk pemeriksaan status SO.' }, 400);
+  }
+  // Pemeriksaan terpisah per rak agar seluruh item dicek SEBELUM satu pun dikirim untuk disimpan.
+  for (const [rack, group] of byRack) {
+    const params = new URLSearchParams({ kodeToko: storeId, dateSo, rakSo: rack });
+    const result = await upstream('item', storeId, params);
+    if (!result.ok) {
+      return response({
+        success: false,
+        error: 'Tidak dapat memverifikasi status SO. Penyimpanan dibatalkan agar tidak terjadi duplikasi.',
+        rack,
+        upstreamStatus: result.status,
+      }, 502);
+    }
+    let document: unknown;
+    try { document = await result.json(); } catch {
+      return response({ success: false, error: 'Respons pemeriksaan status SO tidak valid. Penyimpanan dibatalkan.' }, 502);
+    }
+    const loaded = asRecord(document);
+    const records = Array.isArray(loaded?.data) ? loaded.data : [];
+    for (const item of group) {
+      const plu = String(item.plu);
+      const found = records.find((row) => {
+        const obj = asRecord(row);
+        return obj && String(obj.plu ?? '').trim() === plu;
+      });
+      if (!found) {
+        return response({ success: false, error: 'PLU tidak ditemukan pada data ENTRY KKSO rak. Simpan dibatalkan.', plu, rack }, 409);
+      }
+      const statusSO = inspectSOStatus(found);
+      if (statusSO.blocked) {
+        return response({
+          success: false,
+          status: false,
+          error: 'PLU Sudah Dilakukan Proses SO',
+          message: 'Penyimpanan dibatalkan: status SO perlu diverifikasi agar tidak terjadi entry ulang.',
+          plu,
+          rack,
+          statusFlag: statusSO.statusFlag,
+          validationMode: 'entry-rack-status',
+        }, 409);
+      }
+    }
+  }
+  return null;
+}
+
+/**
  * Fallback aman untuk cek PLU tanpa parameter sesi menu.
  * Tidak memanggil cek_plu_rak_bebas dengan nilai tiruan. Sebagai gantinya,
  * mencari PLU/barcode yang memang ada dalam daftar ENTRY KKSO rak terkait.
@@ -277,7 +388,22 @@ async function checkFromEntryRack(storeId: string, dateSo: string, rack: string,
       note: 'Untuk memeriksa barang di luar daftar entry rak, gunakan cek_plu_rak_bebas dengan parameter menuList, lang, userSo dari sesi resmi.',
     }, 404);
   }
-  return response({ success: true, data: found, lookupMode: 'entry-rack' });
+  const soStatus = inspectSOStatus(found);
+  if (soStatus.blocked) {
+    return response({
+      success: false,
+      status: false,
+      error: 'PLU Sudah Dilakukan Proses SO',
+      message: 'PLU terindikasi telah diproses SO; jangan entry ulang tanpa konfirmasi dari sistem resmi.',
+      plu: searched,
+      rack,
+      statusFlag: soStatus.statusFlag,
+      lookupMode: 'entry-rack',
+      validationMode: 'entry-rack-status',
+    }, 409);
+  }
+  return response({ success: true, data: found, lookupMode: 'entry-rack',
+    soStatus: soStatus.checked ? 'tidak_terindikasi_diproses' : 'tidak_dapat_dipastikan' });
 }
 
 function configurationError(): Response | null {
@@ -290,11 +416,23 @@ function configurationError(): Response | null {
 }
 
 export async function GET(req: Request) {
-  const locked = configurationError();
-  if (locked) return locked;
   const qs = new URL(req.url).searchParams;
   const mode = qs.get('type');
-  if (mode !== 'rack' && mode !== 'item' && mode !== 'cek') return response({ success: false, error: 'type GET harus rack, item, atau cek' }, 400);
+  if (mode === 'save') {
+    // Dibuka lewat browser => GET. Tampilkan petunjuk, JANGAN melakukan penyimpanan.
+    return response({
+      success: true,
+      ready: !!env('ALFA_API_KEY'),
+      message: 'Endpoint save tersedia. Untuk menyimpan ENTRY KKSO gunakan POST dengan body JSON.',
+      method: 'POST',
+      endpoint: '/api/so?type=save',
+      requiredBody: ['kodeToko', 'dateSo', 'data'],
+      note: 'GET ini hanya informasi; tidak mengirim atau menyimpan data.',
+    });
+  }
+  const locked = configurationError();
+  if (locked) return locked;
+  if (mode !== 'rack' && mode !== 'item' && mode !== 'cek') return response({ success: false, error: 'type GET harus rack, item, cek, atau save (info POST)' }, 400);
   const store = verifyStore(qs.get('storeId'));
   const date = convertDate(qs.get('date'));
   if (!store || !date) return response({ success: false, error: 'storeId atau date tidak valid' }, 400);
@@ -361,5 +499,8 @@ export async function POST(req: Request) {
       tag: String(item.tag ?? ''),
     });
   }
+  // Jangan teruskan POST bila PLU berindikasi sudah proses SO.
+  const blocked = await validateBeforeSave(store, date, data);
+  if (blocked) return blocked;
   return upstream('save', store, new URLSearchParams(), { kodeToko: store, dateSo: date, data });
 }

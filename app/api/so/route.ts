@@ -2,6 +2,8 @@
  * Satu Route Handler Next.js untuk Entry KKSO.
  * URL browser: /api/so?type=rack|item|cek|save
  * Sumber upstream: app.alfastore.co.id — hanya empat endpoint yang diizinkan.
+ * Tanpa SO_PROXY_PASSWORD. Untuk pemakaian publik wajib tambahkan autentikasi pengguna
+ * dan pembatasan akses di luar route ini agar API key server tidak disalahgunakan.
  *
  * PENTING: Hanya gunakan akses API yang Anda miliki izinnya.
  * Kredensial HARUS disimpan sebagai Environment Variables Vercel, bukan di HTML.
@@ -30,24 +32,12 @@ function response(data: unknown, status = 200) {
     headers: {
       'Cache-Control': 'no-store, private, max-age=0',
       'X-Content-Type-Options': 'nosniff',
-      'Vary': 'X-SO-Access',
     },
   });
 }
 
 function env(name: string) {
   return (process.env[name] || '').trim();
-}
-
-function safeEqual(a: string, b: string): boolean {
-  // Bandingkan tanpa keluar lebih awal dari loop.
-  const aa = new TextEncoder().encode(a);
-  const bb = new TextEncoder().encode(b);
-  let mismatch = aa.length ^ bb.length;
-  for (let i = 0; i < Math.max(aa.length, bb.length); i++) {
-    mismatch |= (aa[i] || 0) ^ (bb[i] || 0);
-  }
-  return mismatch === 0;
 }
 
 function asRecord(value: unknown): Dict | null {
@@ -260,17 +250,17 @@ async function upstream(mode: Mode, storeId: string, params: URLSearchParams, bo
   return response({ success: false, error: 'PLU tidak ditemukan atau bentuk respons tidak dikenal' }, 404);
 }
 
-function authorized(req: Request): Response | null {
-  if (!env('ALFA_API_KEY')) return response({ success: false, error: 'ALFA_API_KEY belum diatur di Environment Variables Vercel.' }, 503);
-  const password = env('SO_PROXY_PASSWORD');
-  if (!password) return response({ success: false, error: 'SO_PROXY_PASSWORD belum diatur. Proxy terkunci untuk keamanan.' }, 503);
-  const provided = req.headers.get('X-SO-Access') || '';
-  if (!safeEqual(provided, password)) return response({ success: false, error: 'Password akses Vercel salah atau belum diisi.' }, 401);
+function configurationError(): Response | null {
+  // Tidak menggunakan SO_PROXY_PASSWORD / X-SO-Access.
+  // API key sumber tetap hanya dibaca di server dan tidak dikirim ke browser.
+  if (!env('ALFA_API_KEY')) {
+    return response({ success: false, error: 'ALFA_API_KEY belum diatur di Environment Variables Vercel.' }, 503);
+  }
   return null;
 }
 
 export async function GET(req: Request) {
-  const locked = authorized(req);
+  const locked = configurationError();
   if (locked) return locked;
   const qs = new URL(req.url).searchParams;
   const mode = qs.get('type');
@@ -309,7 +299,7 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const locked = authorized(req);
+  const locked = configurationError();
   if (locked) return locked;
   if (new URL(req.url).searchParams.get('type') !== 'save') return response({ success: false, error: 'type POST harus save' }, 400);
   const contentType = req.headers.get('Content-Type') || '';

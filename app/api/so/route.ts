@@ -1,7 +1,8 @@
 /**
  * Satu Route Handler Next.js untuk Entry KKSO.
  * URL browser: /api/so?type=rack|item|cek|save
- * Sumber upstream: app.alfastore.co.id — hanya empat endpoint yang diizinkan.
+ * Sumber upstream: app.alfastore.co.id — endpoint rak, item, dan simpan.
+ * Cek PLU memakai daftar item rak, tidak mengirim permintaan cek PLU rak bebas.
  * Tanpa SO_PROXY_PASSWORD. Untuk pemakaian publik wajib tambahkan autentikasi pengguna
  * dan pembatasan akses di luar route ini agar API key server tidak disalahgunakan.
  *
@@ -19,7 +20,6 @@ const BASE = 'https://app.alfastore.co.id/prd';
 const ROUTES = {
   rack: '/api/so/entry_kkso/get_rak_tx_stEntry',
   item: '/api/so/entry_kkso/get_data_entry',
-  cek: '/api/so/cetak_kkso/cek_plu_rak_bebas',
   save: '/api/so/entry_kkso/save_cek_data_entry',
 } as const;
 
@@ -238,18 +238,46 @@ async function upstream(mode: Mode, storeId: string, params: URLSearchParams, bo
     const rows = rowsFrom(data).map(normalizeItem).filter((x): x is Dict => x !== null);
     return response({ success: true, data: rows });
   }
-  const rows = rowsFrom(data);
-  if (rows.length) {
-    const matched = rows.map(normalizeItem).find((x) => x !== null);
-    return response({ success: true, data: matched ?? rows[0] });
+  // Pengaman untuk TypeScript jika daftar mode diperluas di kemudian hari.
+  return response({ success: false, error: 'Mode API sumber belum didukung' }, 400);
+}
+
+/**
+ * Fallback aman untuk cek PLU tanpa parameter sesi menu.
+ * Tidak memanggil cek_plu_rak_bebas dengan nilai tiruan. Sebagai gantinya,
+ * mencari PLU/barcode yang memang ada dalam daftar ENTRY KKSO rak terkait.
+ * Ini BUKAN pengganti penuh validasi PLU rak bebas.
+ */
+async function checkFromEntryRack(storeId: string, dateSo: string, rack: string, pluOrBarcode: string): Promise<Response> {
+  const qs = new URLSearchParams({ kodeToko: storeId, dateSo, rakSo: rack });
+  const result = await upstream('item', storeId, qs);
+  if (!result.ok) return result;
+
+  let decoded: unknown;
+  try {
+    decoded = await result.json();
+  } catch {
+    return response({ success: false, error: 'Data item rak bukan JSON.' }, 502);
   }
-  const obj = asRecord(data);
-  if (obj) {
-    const candidate = asRecord(obj.data) || asRecord(obj.result) || obj;
-    const normalized = normalizeItem(candidate);
-    if (normalized) return response({ success: true, data: normalized });
+  const data = asRecord(decoded);
+  const rows = Array.isArray(data?.data) ? data.data : [];
+  const searched = pluOrBarcode.trim();
+  const found = rows.find((raw) => {
+    const obj = asRecord(raw);
+    if (!obj) return false;
+    return [obj.plu, obj.barcode, obj.barcode_no].some(
+      (value) => value !== undefined && String(value).trim() === searched
+    );
+  });
+  if (!found) {
+    return response({
+      success: false,
+      error: 'PLU/barcode tidak ditemukan pada data ENTRY KKSO untuk rak ini.',
+      lookupMode: 'entry-rack',
+      note: 'Untuk memeriksa barang di luar daftar entry rak, gunakan cek_plu_rak_bebas dengan parameter menuList, lang, userSo dari sesi resmi.',
+    }, 404);
   }
-  return response({ success: false, error: 'PLU tidak ditemukan atau bentuk respons tidak dikenal' }, 404);
+  return response({ success: true, data: found, lookupMode: 'entry-rack' });
 }
 
 function configurationError(): Response | null {
@@ -284,18 +312,10 @@ export async function GET(req: Request) {
     const rack = verifyRack(qs.get('rack'));
     const plu = verifyPLU(qs.get('plu'));
     if (!rack || !plu) return response({ success: false, error: 'rack atau plu tidak valid' }, 400);
-    const menu = env('SO_MENU_LIST');
-    const lang = env('SO_LANG');
-    const user = env('SO_USER_SO');
-    if (!menu || !lang || !user) return response({ success: false, error: 'Isi SO_MENU_LIST, SO_LANG, SO_USER_SO dari sesi resmi untuk menjalankan cek PLU.' }, 503);
-    params.set('storeId', store);
-    params.set('dateSo', date);
-    params.set('rakSo', rack);
-    params.set('pluBarcode', plu);
-    params.set('menuList', menu);
-    params.set('lang', lang);
-    params.set('deviceType', 'pda');
-    params.set('userSo', user);
+    // Mode cek: cari PLU/barcode di data ENTRY KKSO untuk rak terpilih.
+    // Tidak membutuhkan parameter sesi menu, bahasa, atau userSo.
+    // Data di luar rak tidak dapat ditemukan dengan metode ini.
+    return checkFromEntryRack(store, date, rack, plu);
   }
   return upstream(mode, store, params);
 }

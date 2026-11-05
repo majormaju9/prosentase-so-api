@@ -41,6 +41,26 @@ function env(name: string) {
   return (process.env[name] || '').trim();
 }
 
+/** CORS untuk index.html di domain lain. Tanpa wildcard karena ada endpoint POST simpan. */
+function isAllowedOrigin(req: Request, origin: string): boolean {
+  if (!/^https?:\/\//i.test(origin)) return false;
+  let pageOrigin: string;
+  try { pageOrigin = new URL(req.url).origin; } catch { return false; }
+  const configured = env('SO_ALLOWED_ORIGINS').split(/[\s,;]+/).filter(Boolean);
+  return origin === pageOrigin || configured.includes(origin);
+}
+
+function withCors(req: Request, res: Response): Response {
+  const origin = req.headers.get('Origin');
+  if (!origin || !isAllowedOrigin(req, origin)) return res;
+  const headers = new Headers(res.headers);
+  headers.set('Access-Control-Allow-Origin', origin);
+  headers.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  headers.set('Access-Control-Allow-Headers', 'Content-Type');
+  headers.set('Vary', 'Origin');
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+}
+
 function asRecord(value: unknown): Dict | null {
   return !!value && typeof value === 'object' && !Array.isArray(value)
     ? value as Dict
@@ -415,7 +435,7 @@ function configurationError(): Response | null {
   return null;
 }
 
-export async function GET(req: Request) {
+async function getHandler(req: Request) {
   const qs = new URL(req.url).searchParams;
   const mode = qs.get('type');
   if (mode === 'save') {
@@ -458,7 +478,7 @@ export async function GET(req: Request) {
   return upstream(mode, store, params);
 }
 
-export async function POST(req: Request) {
+async function postHandler(req: Request) {
   const locked = configurationError();
   if (locked) return locked;
   if (new URL(req.url).searchParams.get('type') !== 'save') return response({ success: false, error: 'type POST harus save' }, 400);
@@ -503,4 +523,22 @@ export async function POST(req: Request) {
   const blocked = await validateBeforeSave(store, date, data);
   if (blocked) return blocked;
   return upstream('save', store, new URLSearchParams(), { kodeToko: store, dateSo: date, data });
+}
+
+
+// Wrapper saja: tidak mengubah pemetaan rack / item / cek / save dan validasi status SO.
+export async function GET(req: Request) {
+  return withCors(req, await getHandler(req));
+}
+
+export async function POST(req: Request) {
+  return withCors(req, await postHandler(req));
+}
+
+export async function OPTIONS(req: Request) {
+  const origin = req.headers.get('Origin');
+  if (origin && !isAllowedOrigin(req, origin)) {
+    return response({ success: false, error: 'Origin website belum diizinkan. Isi SO_ALLOWED_ORIGINS di Vercel.' }, 403);
+  }
+  return withCors(req, new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } }));
 }

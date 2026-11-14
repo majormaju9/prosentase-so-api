@@ -1,19 +1,5 @@
 export const runtime = "nodejs"
 
-// Isi sessionId, branchId, dan shardId dari instalasi SISA yang aktif.
-const sisaConfig = {
-  apiKey: "iVOZX9MLmKrj1L8R23uF1aryMR1vGMXG",
-  sessionId: "",
-  branchId: "",
-  shardId: "",
-  versionApp: "V.2025.9.4",
-  versionCode: "202594",
-  companyId: "",
-  publicKey: "",
-  macAddr: "",
-  ipAddress: "",
-}
-
 const endpoint = "https://app.alfastore.co.id/prd/api/sis/proses/hitung_setoran_sementara/get_data"
 const responseHeaders = { "Cache-Control": "private, no-store" }
 
@@ -41,42 +27,23 @@ export async function GET(request: Request) {
     return error("Isi storeId, userId (NIK), dcId, dan processDate (DD-MM-YYYY).", 400)
   }
 
-  const upstreamHeaders = {
-    "Content-Type": "application/json",
-    Accept: "application/json",
-    "app-name": "SIS",
-    platform: "win",
-    "version-app": sisaConfig.versionApp.trim(),
-    "version-code": sisaConfig.versionCode.trim(),
-    "store-id": storeId,
-    "branch-id": sisaConfig.branchId.trim(),
-    "shard-id": sisaConfig.shardId.trim(),
-    "company-id": sisaConfig.companyId.trim(),
-    "Api-Key": sisaConfig.apiKey.trim(),
-    "session-id": sisaConfig.sessionId.trim(),
-    "public-key": sisaConfig.publicKey.trim(),
-    "mac-addr": sisaConfig.macAddr.trim(),
-    "ip-address": sisaConfig.ipAddress.trim(),
-  }
-
-  const missing = ["apiKey", "sessionId", "branchId", "shardId"]
-    .filter((name) => !sisaConfig[name as keyof typeof sisaConfig].trim())
-  if (missing.length) {
-    return error(`Isi sisaConfig di route.ts. Kolom kosong: ${missing.join(", ")}.`, 503)
-  }
-
-  const headers = new Headers()
-  for (const [name, value] of Object.entries(upstreamHeaders)) {
-    if (value) headers.set(name, value)
-  }
-
   const upstreamUrl = new URL(endpoint)
   upstreamUrl.search = new URLSearchParams({ storeId, userId, dcId, processDate }).toString()
 
   try {
     const upstream = await fetch(upstreamUrl, {
       method: "GET",
-      headers,
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "User-Agent": "python-requests/2.28.2",
+        "Api-Key": "iVOZX9MLmKrj1L8R23uF1aryMR1vGMXG",
+        "App-Name": "InventoryIntelligence",
+        Platform: "ANDROID",
+        "Store-Id": storeId,
+        "User-Id": userId,
+        "Branch-Id": "MZ01",
+      },
       cache: "no-store",
       redirect: "error",
       signal: AbortSignal.timeout(12_000),
@@ -92,17 +59,6 @@ export async function GET(request: Request) {
       return Response.json(
         { message: "Respons Hitung Setoran Sementara dari Alfastore bukan JSON.", upstreamStatus: upstream.status },
         { status: upstream.ok ? 502 : upstream.status, headers: responseHeaders },
-      )
-    }
-
-    if (!upstream.ok) {
-      const response = await upstream.json().catch(() => null)
-      const message = typeof response?.message === "string"
-        ? response.message
-        : "API Hitung Setoran Sementara mengembalikan error."
-      return Response.json(
-        { message, upstreamStatus: upstream.status },
-        { status: upstream.status, headers: responseHeaders },
       )
     }
 

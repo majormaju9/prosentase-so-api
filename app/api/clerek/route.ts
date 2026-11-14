@@ -34,7 +34,7 @@ export async function GET(request: Request) {
       method: "GET",
       headers: {
         "Content-Type": "application/json",
-        Accept: "application/json",
+        Accept: "application/pdf, application/json, */*",
         "User-Agent": "python-requests/2.28.2",
         "Api-Key": "iVOZX9MLmKrj1L8R23uF1aryMR1vGMXG",
         "App-Name": "InventoryIntelligence",
@@ -52,19 +52,22 @@ export async function GET(request: Request) {
       return new Response(null, { status: upstream.status, headers: responseHeaders })
     }
 
-    const contentType = upstream.headers.get("content-type") ?? ""
-    if (!/^application\/(?:json|[^;\s]+\+json)(?:\s*;|$)/i.test(contentType)) {
-      await upstream.body?.cancel()
-      return Response.json(
-        { message: "Respons Clerek dari Alfastore bukan JSON.", upstreamStatus: upstream.status },
-        { status: upstream.ok ? 502 : upstream.status, headers: responseHeaders },
-      )
+    const contentType = upstream.headers.get("content-type") ?? "application/octet-stream"
+    const mediaType = contentType.split(";", 1)[0].trim().toLowerCase()
+    const isJson = /^application\/(?:json|[^;\s]+\+json)$/.test(mediaType)
+    const headers = new Headers({
+      ...responseHeaders,
+      "Content-Type": contentType,
+      "X-Content-Type-Options": "nosniff",
+    })
+
+    if (!isJson && mediaType !== "application/pdf" && mediaType !== "text/plain") {
+      // Download active formats instead of rendering them on the API origin.
+      const filename = mediaType === "text/html" ? "laporan-clerek.html" : "laporan-clerek"
+      headers.set("Content-Disposition", `attachment; filename="${filename}"`)
     }
 
-    return new Response(upstream.body, {
-      status: upstream.status,
-      headers: { ...responseHeaders, "Content-Type": contentType, "X-Content-Type-Options": "nosniff" },
-    })
+    return new Response(upstream.body, { status: upstream.status, headers })
   } catch (cause) {
     if (cause instanceof Error && cause.name === "TimeoutError") {
       return error("Waktu tunggu API Clerek habis.", 504)

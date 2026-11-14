@@ -3,18 +3,28 @@ export const runtime = "nodejs";
 const endpoint = "https://app.alfastore.co.id/prd/api/pos/transaksi/retur/get_transaction";
 const headers = {
   "Content-Type": "application/json",
-  Accept: "application/json",
+  Accept: "text/html,application/json,*/*",
   "User-Agent": "python-requests/2.28.2",
   "Api-Key": "iVOZX9MLmKrj1L8R23uF1aryMR1vGMXG",
   "App-Name": "InventoryIntelligence",
   Platform: "ANDROID",
-  "Store-Id": "M865",
-  "User-Id": "20020884",
-  "Branch-Id": "MZ01",
+  "Store-Id": "M604",
+  "User-Id": process.env.ALFA_USER_ID?.trim() || "20020884",
+  "Branch-Id": process.env.ALFA_BRANCH_ID?.trim() || "MZ01",
 };
 
 function reply(body: unknown, status = 200) {
   return Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
+}
+
+export function GET() {
+  return reply({
+    status: "route_aktif",
+    storeId: headers["Store-Id"],
+    message: "Untuk mencari struk, gunakan formulir web atau kirim POST dengan JSON.",
+    method: "POST",
+    fields: ["userId", "billNo", "dateTx"],
+  });
 }
 
 export async function POST(request: Request) {
@@ -38,45 +48,78 @@ export async function POST(request: Request) {
     return reply({ error: "Masukkan tanggal transaksi yang valid." }, 400);
   }
   if (input?.storeId !== undefined && input.storeId !== headers["Store-Id"]) {
-    return reply({ error: "Konfigurasi API ini menggunakan toko M865." }, 400);
+    return reply({ error: "Konfigurasi API ini menggunakan toko M604." }, 400);
   }
 
   const transaction = { storeId: headers["Store-Id"], userId, billNo, dateTx };
   const signal = AbortSignal.timeout(15000);
 
+  let upstream: Response;
+  let raw: string;
   try {
-    const upstream = await fetch(endpoint, {
+    upstream = await fetch(endpoint, {
       method: "POST",
       headers,
       body: JSON.stringify(transaction),
       cache: "no-store",
-      redirect: "error",
+      redirect: "manual",
       signal,
     });
-
-    if (!upstream.ok) {
-      const status = upstream.status;
-      const message = status === 401 || status === 403
-        ? "Alfastore menolak kredensial atau akses untuk transaksi ini."
-        : "Alfastore gagal memproses permintaan struk.";
-      return reply({ error: message, upstreamStatus: status }, 502);
-    }
-
-    // THOR accepts an array and uses the same 200^ marker in its HTTP helper.
-    const raw = (await upstream.text()).trim();
-    const marker = /^(\d{3})\^/.exec(raw);
-    if (marker && marker[1] !== "200") {
-      return reply({ error: "Alfastore mengembalikan kesalahan transaksi.", upstreamStatus: Number(marker[1]) }, 502);
-    }
-    const items: unknown = JSON.parse(marker ? raw.slice(marker[0].length).trim() : raw);
-    if (!Array.isArray(items) || items.some((item) => !item || typeof item !== "object" || Array.isArray(item))) {
-      return reply({ error: "Respons Alfastore tidak berbentuk daftar barang." }, 502);
-    }
-    return reply({ transaction, items });
+    raw = (await upstream.text()).trim();
   } catch {
-    if (signal.aborted) {
-      return reply({ error: "Alfastore terlalu lama merespons. Coba lagi." }, 504);
-    }
-    return reply({ error: "Gagal membaca respons dari Alfastore." }, 502);
+    return signal.aborted
+      ? reply({ error: "Alfastore terlalu lama merespons.", code: "UPSTREAM_TIMEOUT" }, 504)
+      : reply({ error: "Vercel gagal terhubung ke server Alfastore.", code: "UPSTREAM_CONNECTION" }, 502);
   }
+
+  if (upstream.status >= 300 && upstream.status < 400) {
+    return reply({
+      error: "Alfastore mengalihkan permintaan. Periksa URL API dan akses toko M604.",
+      code: "UPSTREAM_REDIRECT", upstreamStatus: upstream.status,
+    }, 502);
+  }
+
+  const marker = /^(\d{1,3})\^/.exec(raw);
+  const upstreamStatus = upstream.ok && marker ? Number(marker[1]) : upstream.status;
+  if (upstreamStatus === 401 || upstreamStatus === 403) {
+    return reply({
+      error: "Alfastore menolak akses M604. Periksa Api-Key, User-Id, dan Branch-Id untuk toko ini.",
+      code: "UPSTREAM_ACCESS", upstreamStatus,
+    }, 502);
+  }
+  if (!upstream.ok || (marker && upstreamStatus !== 200)) {
+    return reply({
+      error: "Alfastore mengembalikan kesalahan saat mencari struk.",
+      code: "UPSTREAM_STATUS", upstreamStatus,
+    }, 502);
+  }
+
+  const payload = marker ? raw.slice(marker[0].length).trim() : raw;
+  if (upstreamStatus === 204) return reply({ transaction, items: [] });
+  if (!payload || payload.startsWith("<")) {
+    return reply({
+      error: payload
+        ? "Alfastore mengembalikan halaman HTML. Periksa akses API toko M604."
+        : "Alfastore mengirim respons kosong.",
+      code: payload ? "UPSTREAM_HTML" : "UPSTREAM_EMPTY", upstreamStatus,
+    }, 502);
+  }
+
+  let data;
+  try {
+    data = JSON.parse(payload);
+  } catch {
+    return reply({
+      error: "Isi respons Alfastore tidak dapat dibaca sebagai JSON.",
+      code: "UPSTREAM_JSON", upstreamStatus,
+    }, 502);
+  }
+  const items: unknown = Array.isArray(data) ? data : data?.data?.items ?? data?.items ?? data?.data;
+  if (!Array.isArray(items) || items.some((item) => !item || typeof item !== "object" || Array.isArray(item))) {
+    return reply({
+      error: "Respons Alfastore tidak berbentuk daftar barang struk.",
+      code: "UPSTREAM_ITEMS", upstreamStatus,
+    }, 502);
+  }
+  return reply({ transaction, items });
 }

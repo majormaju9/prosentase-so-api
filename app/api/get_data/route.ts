@@ -1,5 +1,19 @@
 export const runtime = "nodejs"
 
+// Isi sessionId, branchId, dan shardId dari instalasi SISA yang aktif.
+const sisaConfig = {
+  apiKey: "iVOZX9MLmKrj1L8R23uF1aryMR1vGMXG",
+  sessionId: "",
+  branchId: "",
+  shardId: "",
+  versionApp: "V.2025.9.4",
+  versionCode: "202594",
+  companyId: "",
+  publicKey: "",
+  macAddr: "",
+  ipAddress: "",
+}
+
 const endpoint = "https://app.alfastore.co.id/prd/api/sis/proses/hitung_setoran_sementara/get_data"
 const responseHeaders = { "Cache-Control": "private, no-store" }
 
@@ -32,22 +46,23 @@ export async function GET(request: Request) {
     Accept: "application/json",
     "app-name": "SIS",
     platform: "win",
-    "version-app": process.env.SIS_VERSION_APP?.trim() || "V.2025.9.4",
-    "version-code": process.env.SIS_VERSION_CODE?.trim() || "202594",
+    "version-app": sisaConfig.versionApp.trim(),
+    "version-code": sisaConfig.versionCode.trim(),
     "store-id": storeId,
-    "branch-id": process.env.SIS_BRANCH_ID?.trim(),
-    "shard-id": process.env.SIS_SHARD_ID?.trim(),
-    "company-id": process.env.SIS_COMPANY_ID?.trim(),
-    "Api-Key": process.env.SIS_API_KEY?.trim(),
-    "session-id": process.env.SIS_SESSION_ID?.trim(),
-    "public-key": process.env.SIS_PUBLIC_KEY?.trim(),
-    "mac-addr": process.env.SIS_MAC_ADDR?.trim(),
-    "ip-address": process.env.SIS_IP_ADDRESS?.trim(),
+    "branch-id": sisaConfig.branchId.trim(),
+    "shard-id": sisaConfig.shardId.trim(),
+    "company-id": sisaConfig.companyId.trim(),
+    "Api-Key": sisaConfig.apiKey.trim(),
+    "session-id": sisaConfig.sessionId.trim(),
+    "public-key": sisaConfig.publicKey.trim(),
+    "mac-addr": sisaConfig.macAddr.trim(),
+    "ip-address": sisaConfig.ipAddress.trim(),
   }
 
-  if (!upstreamHeaders["Api-Key"] || !upstreamHeaders["session-id"] ||
-      !upstreamHeaders["branch-id"] || !upstreamHeaders["shard-id"]) {
-    return error("Konfigurasi SISA belum lengkap. Isi SIS_API_KEY, SIS_SESSION_ID, SIS_BRANCH_ID, dan SIS_SHARD_ID di server.", 503)
+  const missing = ["apiKey", "sessionId", "branchId", "shardId"]
+    .filter((name) => !sisaConfig[name as keyof typeof sisaConfig].trim())
+  if (missing.length) {
+    return error(`Isi sisaConfig di route.ts. Kolom kosong: ${missing.join(", ")}.`, 503)
   }
 
   const headers = new Headers()

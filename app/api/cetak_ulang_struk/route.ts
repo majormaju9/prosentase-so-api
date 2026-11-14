@@ -17,6 +17,76 @@ function reply(body: unknown, status = 200) {
   return Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
 }
 
+type JsonObject = Record<string, unknown>;
+
+function object(value: unknown): JsonObject | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as JsonObject
+    : undefined;
+}
+
+function amount(value: unknown): number | null {
+  if (typeof value !== "number" && (typeof value !== "string" || !/^-?\d+(\.\d+)?$/.test(value.trim()))) {
+    return null;
+  }
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function paymentDetails(data: unknown, items: unknown[]) {
+  const root = object(data);
+  const inner = object(root?.data);
+  const sources = [
+    object(inner?.payment), object(root?.payment), object(inner?.transaction),
+    object(root?.transaction), inner, root, ...items.map(object),
+  ];
+
+  const methods: { label: string; amount: number | null }[] = [];
+  const paymentLists = [inner?.payments, root?.payments, inner?.payment, root?.payment];
+  for (const list of paymentLists) {
+    if (!Array.isArray(list)) continue;
+    for (const value of list) {
+      const entry = object(value);
+      const method = entry?.method ?? entry?.paymentMethod ?? entry?.type;
+      if (typeof method !== "string" || !method.trim()) continue;
+      const name = method.trim().slice(0, 48);
+      const labels: Record<string, string> = {
+        cash: "Tunai", tunai: "Tunai", card: "Kartu", debit: "Kartu debit",
+        credit: "Kartu kredit", qris: "QRIS", voucher: "Voucher",
+        ol_payment: "Pembayaran online", online: "Pembayaran online",
+      };
+      const label = Object.hasOwn(labels, name.toLowerCase()) ? labels[name.toLowerCase()] : name;
+      methods.push({ label, amount: amount(entry?.amount ?? entry?.nominal) });
+    }
+    if (methods.length) break;
+  }
+
+  // POS summaries can repeat on each item. Read a single value per payment field.
+  const readAmount = (...keys: string[]) => {
+    for (const source of sources) {
+      for (const key of keys) {
+        const value = amount(source?.[key]);
+        if (value !== null && value !== 0) return value;
+      }
+    }
+    return keys.some((key) => sources.some((source) => amount(source?.[key]) === 0)) ? 0 : null;
+  };
+  if (!methods.length) {
+    for (const [key, label] of [
+      ["cash", "Tunai"], ["card", "Kartu"], ["voucher", "Voucher"],
+      ["qris", "QRIS"], ["ol_payment", "Pembayaran online"],
+    ]) {
+      const value = readAmount(key);
+      if (value !== null && value !== 0) methods.push({ label, amount: value });
+    }
+  }
+
+  return {
+    methods,
+    change: readAmount("change_pay", "changeAmount"),
+  };
+}
+
 export function GET() {
   return reply({
     status: "route_aktif",
@@ -121,5 +191,5 @@ export async function POST(request: Request) {
       code: "UPSTREAM_ITEMS", upstreamStatus,
     }, 502);
   }
-  return reply({ transaction, items });
+  return reply({ transaction, items, payment: paymentDetails(data, items) });
 }

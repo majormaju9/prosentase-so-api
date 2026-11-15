@@ -1,4 +1,6 @@
+// Simpan sebagai app/api/sql/route.ts
 export const runtime = "nodejs"
+export const dynamic = "force-dynamic"
 
 // Diasumsikan memakai layanan SIS untuk get_data; endpoint belum diuji langsung.
 const endpoint = "https://app.alfastore.co.id/prd/api/sis/proses/hitung_setoran_sementara/get_data"
@@ -38,13 +40,13 @@ export async function GET(request: Request) {
         "Content-Type": "application/json",
         Accept: "application/json, application/pdf, */*",
         "User-Agent": "python-requests/2.28.2",
-        "Api-Key": "iVOZX9MLmKrj1L8R23uF1aryMR1vGMXG",
+        "Api-Key": process.env.ALFASTORE_API_KEY?.trim() || "iVOZX9MLmKrj1L8R23uF1aryMR1vGMXG",
         "App-Name": "InventoryIntelligence",
         Platform: "ANDROID",
         "Store-Id": storeId,
         "User-Id": userId,
         // Mengikuti contoh pengguna; Branch-Id tidak otomatis sama dengan dcId.
-        "Branch-Id": "MZ01",
+        "Branch-Id": process.env.ALFA_BRANCH_ID?.trim() || "MZ01",
       },
       cache: "no-store",
       redirect: "error",
@@ -55,21 +57,41 @@ export async function GET(request: Request) {
       return new Response(null, { status: upstream.status, headers: responseHeaders })
     }
 
-    const contentType = upstream.headers.get("content-type") ?? "application/octet-stream"
-    const mediaType = contentType.split(";", 1)[0].trim().toLowerCase()
-    const isJson = /^application\/(?:json|[^;\s]+\+json)$/.test(mediaType)
-    const headers = new Headers({
-      ...responseHeaders,
-      "Content-Type": contentType,
-      "X-Content-Type-Options": "nosniff",
-    })
-
-    if (!isJson && mediaType !== "application/pdf" && mediaType !== "text/plain") {
-      const filename = mediaType === "text/html" ? "setoran-sementara.html" : "setoran-sementara"
-      headers.set("Content-Disposition", `attachment; filename="${filename}"`)
+    // get_data diharapkan menghasilkan JSON. Jangan meneruskan halaman HTML
+    // sebagai data sukses atau menyembunyikan pesan AHO dari upstream.
+    const raw = await upstream.text()
+    if (!raw.trim()) {
+      return Response.json({
+        message: "API Alfastore mengembalikan respons kosong.",
+        upstreamStatus: upstream.status,
+      }, { status: upstream.ok ? 502 : upstream.status, headers: responseHeaders })
     }
 
-    return new Response(upstream.body, { status: upstream.status, headers })
+    let payload: unknown
+    try {
+      payload = JSON.parse(raw)
+    } catch {
+      return Response.json({
+        message: "Respons API setoran sementara bukan JSON.",
+        upstreamStatus: upstream.status,
+        upstreamContentType: upstream.headers.get("content-type"),
+        hint: "Periksa endpoint SIS, autentikasi, dan respons upstream. HTML tidak ditampilkan sebagai data setoran.",
+      }, { status: upstream.ok ? 502 : upstream.status, headers: responseHeaders })
+    }
+
+    const message = payload !== null && typeof payload === "object" &&
+      "message" in payload && typeof payload.message === "string" ? payload.message : ""
+    if (/\bAHO\b|server sedang bermasalah/i.test(message)) {
+      return Response.json({
+        message,
+        source: "alfastore",
+        upstreamStatus: upstream.status,
+        requestParameters: { storeId, userId, processDate, dcId },
+        hint: "Pesan berasal dari Alfastore. Penyebab belum dapat dipastikan: verifikasi dcId toko, hak akses/header, tanggal data, dan endpoint SIS. Branch-Id tidak otomatis sama dengan dcId.",
+      }, { status: upstream.ok ? 502 : upstream.status, headers: responseHeaders })
+    }
+
+    return Response.json(payload, { status: upstream.status, headers: responseHeaders })
   } catch (cause) {
     if (cause instanceof Error && cause.name === "TimeoutError") {
       return error("Waktu tunggu API setoran sementara habis.", 504)

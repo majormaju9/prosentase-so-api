@@ -13,12 +13,10 @@ const SIS_HEADERS: Record<string, string> = {
   'Api-Key': 'iVOZX9MLmKrj1L8R23uF1aryMR1vGMXG',
   'App-Name': 'InventoryIntelligence',
   'Platform': 'ANDROID',
-  'Store-Id': 'M865',
-  'User-Id': '20020884',
+  'Store-Id': 'M604',
+  'User-Id': '23067884',
   'Branch-Id': 'MZ01',
-  'Host': 'app.alfastore.co.id',
-  'Connection': 'Keep-Alive',
-  'Accept-Encoding': 'gzip',
+  // Host, Connection, dan Accept-Encoding ditentukan otomatis oleh fetch di Node.js.
 };
 function sisHeaders(ctx: Context): Headers {
   return new Headers({...SIS_HEADERS,
@@ -42,16 +40,29 @@ const actions: Record<string, {path: string; method: string; fallback?: string}>
 };
 type Context = {storeId: string; userId: string; branchId: string};
 function allowedStore(store: string) {
-  return (process.env.RETUR_ALLOWED_STORES || SIS_HEADERS['Store-Id']).split(',').map(s => s.trim().toUpperCase()).includes(store);
+  // Batasi kode toko yang bisa memakai API. Bisa ditambah dari Vercel > Environment Variables.
+  const storeAllowlist = process.env.RETUR_ALLOWED_STORES || 'M604';
+  return storeAllowlist.split(',').map(s => s.trim().toUpperCase()).includes(store);
 }
 function cors(request: Request) {
-  const headers = new Headers({'Cache-Control':'private, no-store', 'Vary':'Origin', 'X-Content-Type-Options':'nosniff'});
+  const headers = new Headers({
+    'Cache-Control': 'no-store',
+    'Vary': 'Origin, Access-Control-Request-Method, Access-Control-Request-Headers',
+    'X-Content-Type-Options': 'nosniff',
+  });
   const origin = request.headers.get('origin');
-  const allowed = (process.env.RETUR_ALLOWED_ORIGINS || '').split(',').map(s => s.trim());
-  if (origin && (origin === new URL(request.url).origin || allowed.includes(origin))) {
+  const allowed = new Set([
+    'https://alfastore.my.id',
+    'https://www.alfastore.my.id',
+    ...((process.env.RETUR_ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean)),
+  ]);
+  const sameOrigin = origin === new URL(request.url).origin;
+  const localDev = !!origin && /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+  if (origin && (sameOrigin || allowed.has(origin) || localDev)) {
     headers.set('Access-Control-Allow-Origin', origin);
     headers.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    headers.set('Access-Control-Allow-Headers', 'Content-Type');
+    headers.set('Access-Control-Allow-Headers', 'Content-Type, Accept');
+    headers.set('Access-Control-Max-Age', '600');
   }
   return headers;
 }
@@ -123,13 +134,17 @@ async function handle(request: Request) {
     } else input = Object.fromEntries(url.searchParams);
   } catch { return reply(request,{ok:false,message:'Body JSON tidak valid.'},400); }
   const action = text(input.action) || url.searchParams.get('action') || '';
+  // Memudahkan pengujian dengan membuka URL /api/retur langsung di browser.
+  if (request.method === 'GET' && (!action || action === 'health')) {
+    return reply(request, {ok:true, service:'retur', status:'ready', message:'Gateway API Retur aktif. Koneksi SIS diuji saat mengambil menu.'});
+  }
   const storeId = (text(input.storeId) || SIS_HEADERS['Store-Id']).toUpperCase();
   const userId = text(input.userId) || SIS_HEADERS['User-Id'];
   const branchId = (text(input.branchId) || SIS_HEADERS['Branch-Id']).toUpperCase();
   if (!/^[A-Z0-9]{4}$/.test(storeId) || !/^\d{8}$/.test(userId) || !/^[A-Z0-9]{2,12}$/.test(branchId)) {
     return reply(request,{ok:false,message:'Isi kode toko 4 karakter, NIK 8 angka, dan kode cabang/DC yang benar.'},400);
   }
-  if (!allowedStore(storeId)) return reply(request,{ok:false,message:'Kode toko belum diizinkan pada RETUR_ALLOWED_STORES.'},403);
+  if (!allowedStore(storeId)) return reply(request,{ok:false,message:'Kode toko '+storeId+' belum diizinkan pada API Retur. Atur RETUR_ALLOWED_STORES bila diperlukan.'},403);
   const ctx: Context = {storeId,userId,branchId};
   if (action === 'connect') {
     if (request.method !== 'POST') return reply(request,{ok:false,message:'Gunakan POST.'},405);

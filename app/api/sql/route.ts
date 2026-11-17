@@ -1,20 +1,23 @@
 /**
- * app/api/penjualan_per_nik/route.ts
- * Penjualan per NIK — parser laporan HTML Alfastore yang memuat QTY per kasir.
+ * app/api/sql/route.ts
+ * Penjualan per NIK — rekap kasir dan pencarian detail PLU berdasarkan nomor bon dari APK THOR v15.1.1.
  * Tidak melakukan cek_login atau memanggil endpoint login.
  *
  * Upstream: GET /prd/api/rpt/laporan/penjualan_per_kasir
- * Query upstream: storeId, userId, periode1 (dd-MM-yyyy)
+ * Query rekap: storeId, userId, periode1 (dd-MM-yyyy)
+ * Detail PLU: POST /prd/api/pos/transaksi/retur/get_transaction
+ * Body berdasarkan APK: storeId, dateTx, userId, billNo
  * API key hanya berasal dari variabel lingkungan server ALFA_API_KEY.
  *
- * PERHATIAN: file ini menggantikan /api/penjualan_per_nik jika route itu sudah ada.
+ * PERHATIAN: file ini menggantikan /api/sql jika route itu sudah ada.
  * Simpan salinan route /api/sql lama sebelum mengganti karena mungkin dipakai fitur lain.
  */
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-const VERSION = '2026-11-18-html-kasir-qty-v2';
+const VERSION = '2026-11-18-thor-plu-scan-v3';
+const TRANSACTION_PATH = 'pos/transaksi/retur/get_transaction';
 const UPSTREAM_BASE = 'https://app.alfastore.co.id/prd/api/';
 const REPORT_PATH = 'rpt/laporan/penjualan_per_kasir';
 const MAX_BODY_CHARS = 1_000_000;
@@ -136,7 +139,7 @@ function extractErrorFromHtml(raw: string): { message: string; code: string } | 
   return null;
 }
 
-export async function GET(request: Request): Promise<Response> {
+async function getReport(request: Request): Promise<Response> {
   const p = new URL(request.url).searchParams;
   const storeId = (p.get('storeId') ?? '').trim().toUpperCase();
   const nik = (p.get('nik') ?? p.get('userId') ?? '').trim();
@@ -146,12 +149,12 @@ export async function GET(request: Request): Promise<Response> {
 
   if ((!storeId && !nik) || p.get('mode') === 'health') {
     return sendJson({
-      ok: true, status: 'route-ready', version: VERSION, path: '/api/penjualan_per_nik',
+      ok: true, status: 'route-ready', version: VERSION, path: '/api/sql',
       apiKeyConfigured: Boolean(apiKey), loginRequired: false,
       upstreamEndpoint: `/prd/api/${REPORT_PATH}`,
       responseType: 'rekap-kasir', qtyScope: 'per-kasir',
       message: 'Route aktif. Masukkan storeId, nik, dateTx untuk membaca QTY pada baris NIK dalam laporan HTML.',
-      example: '/api/penjualan_per_nik?storeId=M865&nik=20020884&dateTx=2026-11-17&branchId=MZ01',
+      example: '/api/sql?storeId=M865&nik=20020884&dateTx=2026-11-17&branchId=MZ01',
     });
   }
   if (!/^[A-Z0-9]{4,8}$/.test(storeId)) return sendJson({ok:false,message:'storeId wajib 4-8 karakter huruf atau angka.'}, 400);
@@ -242,4 +245,237 @@ export async function GET(request: Request): Promise<Response> {
       message: timeout ? 'Alfastore tidak menjawab dalam 25 detik.' : 'Koneksi ke Alfastore gagal.',
     }, 502);
   }
+}
+
+
+interface SaleItem {
+  plu: string;
+  barcode: string;
+  nama: string;
+  qty: number;
+  billNos: string[];
+}
+type BillResult = {
+  billNo: string;
+  status: 'found' | 'empty' | 'not-found' | 'error';
+  items: SaleItem[];
+  message?: string;
+  upstreamStatus?: number;
+  responseKeys?: string[];
+};
+
+function safeFirst(obj: Record<string, unknown>, keys: string[]): unknown {
+  for (const key of keys) {
+    const v = obj[key];
+    if (v !== undefined && v !== null && String(v).trim() !== '') return v;
+  }
+  return undefined;
+}
+function str(v: unknown): string { return v === undefined || v === null ? '' : String(v).trim(); }
+function qtyNumber(v: unknown): number | null {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  const s = str(v).replace(/\s/g, '');
+  if (/^-?\d+(?:\.\d+)?$/.test(s)) return Number(s);
+  if (/^-?\d{1,3}(?:,\d{3})+(?:\.\d+)?$/.test(s)) return Number(s.replace(/,/g, ''));
+  return null;
+}
+
+/**
+ * APK menunjukkan JSON untuk detail bon, tetapi nama pembungkus data dapat berbeda.
+ * Pilih satu array detail paling kuat; jangan hitung satu item beberapa kali karena
+ * JSON mengulang data pada beberapa bagian.
+ */
+function parseSaleItems(root: unknown, billNo: string): SaleItem[] {
+  type Candidate = { entries: SaleItem[]; score: number };
+  const candidates: Candidate[] = [];
+  const visited = new Set<object>();
+  const seenDepthLimit = 12;
+  let nodes = 0;
+  const mapLine = (v: unknown): SaleItem | null => {
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+    const o = v as Record<string, unknown>;
+    const plu = str(safeFirst(o, ['plu','PLU','plu_code','pluCode','kd_plu','kode_plu','kodePlu','item_code','itemCode']));
+    const q = qtyNumber(safeFirst(o,['qty_pcs','qtyPcs','qty','QTY','quantity','qty_jual','qtyJual','qty_sal','qtySal','qty_sold']));
+    if (!/^\d{3,16}$/.test(plu) || q === null || Math.abs(q) > 1_000_000) return null;
+    const barcode = str(safeFirst(o,['barcode','barCode','barcode_item','barcodeItem','ean','ean13','kode_barcode']));
+    const nama = str(safeFirst(o,['descp','description','deskripsi','desc','nama_barang','namaBarang','nama_item','namaItem','item_name','itemName','product_name','productName','name']));
+    return {plu, barcode, nama, qty:q, billNos:[billNo]};
+  };
+  const walk = (value: unknown, depth: number) => {
+    if (!value || typeof value !== 'object' || depth > seenDepthLimit || ++nodes > 12000) return;
+    if (visited.has(value as object)) return;
+    visited.add(value as object);
+    if (Array.isArray(value)) {
+      const lines = value.map(mapLine).filter((x): x is SaleItem => x !== null);
+      if (lines.length) {
+        const score = lines.length * 100 + lines.filter(x => x.nama).length * 8 + lines.filter(x => x.barcode).length * 3;
+        candidates.push({entries:lines, score});
+      }
+      for (const entry of value) walk(entry, depth+1);
+    } else {
+      const obj = value as Record<string, unknown>;
+      for (const child of Object.values(obj)) walk(child,depth+1);
+    }
+  };
+  walk(root,0);
+  if (candidates.length) {
+    candidates.sort((a,b)=>b.score-a.score);
+    return candidates[0].entries;
+  }
+  // Sebagian versi API mengembalikan satu detail item sebagai object.
+  const item = mapLine(root);
+  return item ? [item] : [];
+}
+function decodeMaybeJson(raw: string): unknown | null {
+  let s = raw.trim();
+  if (s.startsWith('200^')) s = s.slice(4).trim();
+  try {
+    const parsed: unknown = JSON.parse(s);
+    if (typeof parsed === 'string' && /^[\[{]/.test(parsed.trim())) {
+      try { return JSON.parse(parsed); } catch { return parsed; }
+    }
+    return parsed;
+  } catch { return null; }
+}
+function apiHeaders(storeId:string, nik:string, branchId:string): Record<string,string> {
+  return {
+    'Accept':'application/json, text/plain, */*',
+    'Content-Type':'application/json',
+    'Api-Key':process.env.ALFA_API_KEY || '',
+    'App-Name':process.env.ALFA_APP_NAME || 'InventoryIntelligence',
+    'Platform':process.env.ALFA_PLATFORM || 'ANDROID',
+    'Store-Id':storeId,
+    'User-Id':(process.env.ALFA_USER_ID || nik).trim(),
+    'Branch-Id':branchId,
+    'User-Agent':process.env.ALFA_USER_AGENT || 'python-requests/2.28.2',
+  };
+}
+function parseError(body: string): string {
+  const parsed=decodeMaybeJson(body);
+  if (parsed && typeof parsed === 'object') {
+    const o=parsed as Record<string,unknown>;
+    return str(o.message || o.error || o.msg).slice(0,240);
+  }
+  return plainText(body).slice(0,180);
+}
+async function fetchBill(storeId:string,nik:string,dateTx:string,branchId:string,billNo:string):Promise<BillResult> {
+  const url = new URL(TRANSACTION_PATH, UPSTREAM_BASE);
+  const payload = {storeId,dateTx,userId:nik,billNo: /^\d+$/.test(billNo) ? Number(billNo):billNo};
+  try {
+    const r = await fetch(url, {
+      method:'POST', headers:apiHeaders(storeId,nik,branchId),
+      body:JSON.stringify(payload), cache:'no-store',redirect:'manual',
+      signal:AbortSignal.timeout(11000),
+    });
+    const raw=(await r.text()).slice(0,250000);
+    const json=decodeMaybeJson(raw);
+    if (!r.ok || r.status >= 300) {
+      const msg=parseError(raw) || `HTTP ${r.status}`;
+      const notFound = /bon.{0,36}(tidak|not).{0,18}(ditemukan|found)|transaction not found|data tidak ditemukan/i.test(msg);
+      return {billNo,status:notFound?'not-found':'error',items:[],message:msg,upstreamStatus:r.status};
+    }
+    if (!json || typeof json !== 'object') {
+      return {billNo,status:'error',items:[],message:'Respons detail bukan JSON valid, atau HTML error (meskipun HTTP 200).',upstreamStatus:r.status};
+    }
+    const obj=json as Record<string,unknown>;
+    const successFlag=obj.ok === false || obj.success === false || (typeof obj.status==='string' && /^(error|failed)$/i.test(obj.status));
+    if (successFlag) {
+      return {billNo,status:'error',items:[],message:str(obj.message || obj.error).slice(0,220)||'API menolak bon.',upstreamStatus:r.status};
+    }
+    const items=parseSaleItems(json,billNo);
+    if (!items.length) {
+      return {billNo,status:'empty',items:[],message:'JSON diterima, tetapi pasangan PLU + qty tidak ditemukan.',upstreamStatus:r.status,responseKeys:Object.keys(obj).slice(0,20)};
+    }
+    return {billNo,status:'found',items,upstreamStatus:r.status};
+  } catch(e) {
+    const err=e instanceof Error ? e.message : 'Koneksi gagal';
+    return {billNo,status:'error',items:[],message:err.slice(0,200)};
+  }
+}
+function aggregate(results:BillResult[]):SaleItem[] {
+  const map=new Map<string,SaleItem>();
+  for (const result of results) for (const item of result.items) {
+    const key=item.plu;
+    const prev=map.get(key);
+    if (!prev) map.set(key,{...item,billNos:[result.billNo]});
+    else {
+      prev.qty=Number((prev.qty+item.qty).toFixed(3));
+      if (!prev.nama && item.nama) prev.nama=item.nama;
+      if (!prev.barcode && item.barcode) prev.barcode=item.barcode;
+      if (!prev.billNos.includes(result.billNo)) prev.billNos.push(result.billNo);
+    }
+  }
+  return [...map.values()].sort((a,b)=>a.plu.localeCompare(b.plu,'en',{numeric:true}));
+}
+function dateTodayWib():string { return wibToday(); }
+
+export async function GET(request:Request):Promise<Response> {
+  const p = new URL(request.url).searchParams;
+  const mode=(p.get('mode') || 'report').toLowerCase();
+  if (mode==='health' || (!p.get('nik') && !p.get('storeId'))) {
+    return sendJson({ok:true,status:'route-ready',version:VERSION,path:'/api/sql',apiKeyConfigured:Boolean(process.env.ALFA_API_KEY),loginRequired:false,
+      modes:['report','plu','detail'],
+      reportEndpoint:`/prd/api/${REPORT_PATH}`,detailEndpoint:`/prd/api/${TRANSACTION_PATH}`,
+      detailVerifiedOnline:false,
+      message:'Rekap dari laporan HTML; PLU menggunakan detail bon APK THOR, perlu verifikasi respons API.',
+      exampleReport:'/api/sql?storeId=M865&nik=20020884&dateTx=2026-11-17&branchId=MZ01',
+      examplePLU:'/api/sql?storeId=M865&nik=20020884&dateTx=2026-11-17&branchId=MZ01&mode=plu&billFrom=1&billTo=25',
+    });
+  }
+  if (mode === 'report') return getReport(request);
+  if (mode !== 'plu' && mode !== 'detail') return sendJson({ok:false,message:'mode hanya report, plu, detail, health.'},400);
+  const storeId=str(p.get('storeId')).toUpperCase();
+  const nik=str(p.get('nik') || p.get('userId'));
+  const dateTx=str(p.get('dateTx') || dateTodayWib());
+  const branchId=str(p.get('branchId') || process.env.ALFA_BRANCH_ID || 'MZ01').toUpperCase();
+  if (!/^[A-Z0-9]{4,8}$/.test(storeId) || !/^\d{4,12}$/.test(nik) || !validDate(dateTx) || !/^[A-Z0-9_-]{2,12}$/.test(branchId))
+    return sendJson({ok:false,code:'INVALID_PARAMETERS',message:'Parameter storeId, nik, dateTx, atau branchId tidak valid.'},400);
+  if (!process.env.ALFA_API_KEY) return sendJson({ok:false,code:'MISSING_API_KEY',message:'ALFA_API_KEY belum disetel di Vercel.'},503);
+
+  if (mode==='detail') {
+    const billNo=str(p.get('billNo'));
+    if (!/^[A-Z0-9_-]{1,40}$/i.test(billNo)) return sendJson({ok:false,message:'Isi billNo untuk mengambil detail satu bon.'},400);
+    const result=await fetchBill(storeId,nik,dateTx,branchId,billNo);
+    const items=aggregate([result]);
+    return sendJson({ok:result.status==='found',status:result.status,mode:'detail',version:VERSION,storeId,nik,dateTx,branchId,
+      endpoint:`/prd/api/${TRANSACTION_PATH}`,billNo,items,pluAvailable:items.length>0,
+      totalPLU:items.length,totalQty:items.length ? items.reduce((v,i)=>v+i.qty,0):null,
+      message:result.message || (items.length?'PLU bon ditemukan.':'Tidak ada PLU untuk bon ini.'),
+      responseKeys:result.responseKeys,upstreamStatus:result.upstreamStatus,
+      note:'Detail hanya mencakup billNo yang diminta. Nama/barcode ditampilkan jika tersedia pada respons.'},result.status==='error'?502:200);
+  }
+
+  const from=Number(p.get('billFrom') || '1');
+  const to=Number(p.get('billTo') || '25');
+  // Batasi beban upstream. Web menggabungkan halaman secara bertahap.
+  if (!Number.isInteger(from)||!Number.isInteger(to)||from<1||to<from||to-from+1>25||to>2000)
+    return sendJson({ok:false,code:'INVALID_BILL_RANGE',message:'Rentang billFrom/billTo harus 1-2000 dan maksimal 25 nomor bon per permintaan.'},400);
+  const numbers=Array.from({length:to-from+1},(_,i)=>String(from+i));
+  const out:BillResult[]=new Array(numbers.length);
+  let cursor=0;
+  const worker=async()=>{
+    while(cursor < numbers.length) {
+      const index=cursor++;
+      out[index]=await fetchBill(storeId,nik,dateTx,branchId,numbers[index]);
+    }
+  };
+  await Promise.all(Array.from({length:Math.min(4,numbers.length)},()=>worker()));
+  const found=out.filter(x=>x.status==='found');
+  const empty=out.filter(x=>x.status==='empty');
+  const errors=out.filter(x=>x.status==='error');
+  const notFound=out.filter(x=>x.status==='not-found');
+  const items=aggregate(out);
+  return sendJson({
+    ok:found.length>0, status:found.length?'partial-detail':'no-detail',mode:'plu',version:VERSION,
+    storeId,nik,dateTx,branchId,endpoint:`/prd/api/${TRANSACTION_PATH}`,
+    billFrom:from,billTo:to,requestedBon:numbers.length,
+    foundBon:found.map(x=>x.billNo),emptyBon:empty.map(x=>x.billNo),notFoundBon:notFound.map(x=>x.billNo),
+    failedBon:errors.map(x=>({billNo:x.billNo,message:x.message,upstreamStatus:x.upstreamStatus})),
+    diagnostic:empty.slice(0,2).map(x=>({billNo:x.billNo,responseKeys:x.responseKeys})),
+    items,pluAvailable:items.length>0,totalPLU:items.length,
+    totalQty:items.length?items.reduce((sum,x)=>sum+x.qty,0):null,
+    complete:false,
+    note:'Ini hanya pemindaian nomor bon dalam rentang yang dipilih. No. Bon pada laporan rekap adalah JUMLAH, bukan daftar billNo. QTY hasil ini belum tentu sama dengan total rekap; belum berarti seluruh PLU telah ditemukan.',
+    message:found.length?`Berhasil membaca ${found.length} bon dalam rentang ${from}-${to}.`:'Belum ada PLU yang dapat dibaca dalam rentang ini. Lihat failedBon/diagnostic dan coba mode=detail dengan billNo nyata.',
+  },found.length?200:502);
 }

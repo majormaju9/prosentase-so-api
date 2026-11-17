@@ -2,9 +2,9 @@
  * Next.js App Router API - simpan sebagai app/api/penjualan_per_nik/route.ts
  * Vercel URL: https://majormaju9-prosentase-so-api.vercel.app/api/penjualan_per_nik
  * Alur diambil dari APK THOR v15.1.1 (PenjualanNikActivity & laporan per kasir).
- * PENTING: APi key dari screenshot di bawah hanya sebagai fallback agar langsung dites.
- * Lebih aman: set ALFA_API_KEY sebagai Environment Variable pribadi di Vercel,
- * hapus nilai fallback sebelum repo dibagikan / dijadikan public.
+ * Gunakan ALFA_API_KEY di Vercel Environment Variables.
+ * Jangan menaruh API key di source code / GitHub.
+ * Jika gambar sebelumnya menampilkan key asli, rotasi key tersebut.
  */
 import { NextRequest, NextResponse } from 'next/server';
 
@@ -13,7 +13,8 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 const API_ROOT = 'https://app.alfastore.co.id/prd/api/';
-const API_KEY = process.env.ALFA_API_KEY || 'iVOZX9MLmKrj1L8R23uF1aryMR1vGMXG';
+const API_KEY = process.env.ALFA_API_KEY || '';
+const SALES_ACCESS_TOKEN = process.env.SALES_ACCESS_TOKEN || ''; 
 const HEADER_USER_ID = process.env.ALFA_USER_ID || '20020884';
 const DEFAULT_BRANCH_ID = process.env.ALFA_BRANCH_ID || 'MZ01';
 const MAX_BON_PER_PAGE = 60;
@@ -146,10 +147,23 @@ export async function GET(req: NextRequest) {
   const dateTx = (params.get('dateTx') || dateWIB()).trim();
   const branchId = (params.get('branchId') || DEFAULT_BRANCH_ID).trim().toUpperCase();
   const mode = params.get('mode') === 'report' ? 'report' : 'detail';
-  const page = Math.min(10000, Math.max(1, Number.parseInt(params.get('page') || '1', 10) || 1));
+  const page = Math.min(100, Math.max(1, Number.parseInt(params.get('page') || '1', 10) || 1));
   const limit = Math.min(MAX_BON_PER_PAGE, Math.max(1, Number.parseInt(params.get('limit') || '50', 10) || 50));
   const periode1 = (params.get('periode1') || ddmmyyyy(dateTx)).trim();
   const periode2 = (params.get('periode2') || '').trim();
+  // Buka endpoint tanpa NIK untuk mengecek deployment (bukan 404).
+  if (!nik) return json({
+    ok: true, status: 'route-ready',
+    message: 'Route penjualan per NIK aktif. Masukkan storeId, nik, dan dateTx untuk mengambil data.',
+    path: '/api/penjualan_per_nik',
+    apiKeyConfigured: Boolean(API_KEY),
+    accessTokenRequired: Boolean(SALES_ACCESS_TOKEN),
+    example: '/api/penjualan_per_nik?storeId=M865&nik=20020884&dateTx=2026-11-18&branchId=MZ01'
+  });
+  // Opsional tetapi sangat disarankan: batasi akses endpoint per-NIK.
+  if (SALES_ACCESS_TOKEN && req.headers.get('x-access-token') !== SALES_ACCESS_TOKEN) {
+    return json({ ok: false, message: 'Token akses tidak valid. Isi token dari SALES_ACCESS_TOKEN di halaman tes.' }, 401);
+  }
   if (!/^[A-Z0-9]{4,8}$/.test(storeId)) return json({ ok: false, message: 'storeId wajib 4-8 huruf/angka.' }, 400);
   if (!/^\d{1,12}$/.test(nik)) return json({ ok: false, message: 'NIK wajib angka (1-12 digit).' }, 400);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateTx) || !Number.isFinite(Date.parse(`${dateTx}T12:00:00Z`))) {
@@ -159,7 +173,7 @@ export async function GET(req: NextRequest) {
   if (mode === 'report' && (!/^\d{2}-\d{2}-\d{4}$/.test(periode1) || (periode2 && !/^\d{2}-\d{2}-\d{4}$/.test(periode2)))) {
     return json({ ok: false, message: 'periode1/2 harus dd-MM-yyyy.' }, 400);
   }
-  if (!API_KEY) return json({ ok: false, message: 'API key server belum dikonfigurasi.' }, 500);
+  if (!API_KEY) return json({ ok: false, message: 'ALFA_API_KEY belum disetel di Vercel Environment Variables.' }, 503);
 
   try {
     if (mode === 'report') {

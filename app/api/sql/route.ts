@@ -1,10 +1,13 @@
 /**
- * Next.js App Router API - simpan sebagai app/api/penjualan_per_nik/route.ts
- * Vercel URL: https://majormaju9-prosentase-so-api.vercel.app/api/penjualan_per_nik
- * Alur diambil dari APK THOR v15.1.1 (PenjualanNikActivity & laporan per kasir).
- * Gunakan ALFA_API_KEY di Vercel Environment Variables.
- * Jangan menaruh API key di source code / GitHub.
- * Jika gambar sebelumnya menampilkan key asli, rotasi key tersebut.
+ * Perbaikan upstream 404 cek_login untuk THOR v15.1.1.
+ * Letakkan hanya di: app/api/penjualan_per_nik/route.ts
+ * Tidak mengubah /api/sql (berpotensi digunakan fitur Clerek/SQL lain).
+ *
+ * mode=report (default): GET rpt/laporan/penjualan_per_kasir
+ * mode=transaction&billNo=1: POST pos/transaksi/retur/get_transaction
+ * Tidak memanggil endpoint so/login/cek_login yang memberi 404 di server pengguna.
+ *
+ * Header kunci tetap server-side melalui ALFA_API_KEY. Jangan commit kunci!
  */
 import { NextRequest, NextResponse } from 'next/server';
 
@@ -12,276 +15,181 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-const API_ROOT = 'https://app.alfastore.co.id/prd/api/';
+const API_BASE = 'https://app.alfastore.co.id/prd/api/';
+const VERSION = '2026-11-18-upstream404-report-first';
 const API_KEY = process.env.ALFA_API_KEY || '';
-const SALES_ACCESS_TOKEN = process.env.SALES_ACCESS_TOKEN || ''; 
-const HEADER_USER_ID = process.env.ALFA_USER_ID || '20020884';
 const DEFAULT_BRANCH_ID = process.env.ALFA_BRANCH_ID || 'MZ01';
-const MAX_BON_PER_PAGE = 60;
-const CONCURRENCY = 6;
-const UPSTREAM_TIMEOUT_MS = 12000;
+const AUTH_TOKEN = process.env.SALES_ACCESS_TOKEN || '';
+const TIMEOUT_MS = 18000;
 
-type JSONObject = Record<string, unknown>;
-type SaleItem = { plu: string; barcode: string; namaBarang: string; qty: number; jumlahBon: number };
-type UpstreamResult = { status: number; raw: string; parsed: unknown; endpoint: string; ok: boolean };
-
-const obj = (value: unknown): JSONObject | null =>
-  value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? value as JSONObject : null;
-
-function getAny(o: JSONObject | null, keys: string[]): unknown {
-  if (!o) return undefined;
-  for (const key of keys) {
-    if (o[key] !== undefined && o[key] !== null) return o[key];
-  }
+type R = Record<string, unknown>;
+type Upstream = { status: number; ok: boolean; text: string; data: unknown; format: string; path: string; contentType: string };
+type SaleRow = { plu: string; barcode: string; namaBarang: string; qty: number; jumlahBaris: number };
+const asObject = (v: unknown): R | null => v !== null && typeof v === 'object' && !Array.isArray(v) ? v as R : null;
+const asText = (v: unknown): string => v == null ? '' : String(v).trim();
+const value = (obj: R | null, keys: string[]): unknown => {
+  if (!obj) return undefined;
+  for (const k of keys) if (obj[k] !== undefined && obj[k] !== null) return obj[k];
   return undefined;
-}
-function textValue(value: unknown): string {
-  if (value === null || value === undefined) return '';
-  return String(value).trim();
-}
-function numberValue(value: unknown): number {
-  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
-  const valueString = String(value ?? '').replace(/,/g, '.');
-  const valueNum = Number(valueString);
-  return Number.isFinite(valueNum) ? valueNum : 0;
-}
-function dateWIB(): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
-}
-function ddmmyyyy(ymd: string): string {
-  const [year, month, day] = ymd.split('-');
-  return `${day}-${month}-${year}`;
-}
-function parseApiBody(raw: string): unknown {
-  // Beberapa respons internal THOR berbentuk 200^{json}, 204^[], atau 0^pesan.
+};
+const quantity = (v: unknown): number | null => {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  const s = asText(v).replace(/\s/g, '').replace(/,/g, '.');
+  if (!s || !/^-?\d+(?:\.\d+)?$/.test(s)) return null;
+  const num = Number(s); return Number.isFinite(num) ? num : null;
+};
+const isoToDmy = (d: string): string => { const [y,m,day] = d.split('-'); return `${day}-${m}-${y}`; };
+const todayWib = (): string => new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Jakarta', year: 'numeric', month: '2-digit', day: '2-digit',
+}).format(new Date());
+const json = (body: unknown, status = 200) => NextResponse.json(body, {
+  status, headers: { 'Cache-Control': 'no-store, private, max-age=0', 'X-Content-Type-Options': 'nosniff' },
+});
+
+// Dukungan format lama THOR: 200^{...}, 204^[], atau JSON biasa.
+function decode(raw: string): { data: unknown; format: string; legacyStatus?: string } {
   const clean = raw.replace(/^\uFEFF/, '').trim();
-  const match = clean.match(/^(\d{1,3})\^([\s\S]*)$/);
-  const body = match ? match[2].trim() : clean;
-  if (!body) return { message: match ? `Status API ${match[1]}` : 'Respons kosong' };
-  try { return JSON.parse(body); } catch { return { message: body }; }
+  const legacy = clean.match(/^(\d{1,3})\^([\s\S]*)$/);
+  const text = legacy ? legacy[2].trim() : clean;
+  if (!text) return { data: null, format: 'empty', legacyStatus: legacy?.[1] };
+  try { return { data: JSON.parse(text) as unknown, format: 'json', legacyStatus: legacy?.[1] }; }
+  catch { return { data: text, format: /^</.test(text) ? 'html' : 'text', legacyStatus: legacy?.[1] }; }
 }
-function payloadRows(value: unknown): JSONObject[] {
-  if (Array.isArray(value)) return value.map(obj).filter((x): x is JSONObject => !!x);
-  const o = obj(value);
-  if (!o) return [];
-  for (const key of ['data', 'items', 'rows', 'result', 'dataList', 'transactions', 'datum']) {
-    const nested = o[key];
-    if (Array.isArray(nested)) return nested.map(obj).filter((x): x is JSONObject => !!x);
-    const inner = obj(nested);
-    if (inner) {
-      for (const k of ['items', 'data', 'rows', 'result']) {
-        if (Array.isArray(inner[k])) return (inner[k] as unknown[]).map(obj).filter((x): x is JSONObject => !!x);
+
+// Mengambil hanya baris yang benar-benar memuat PLU dan QTY: jangan mengarang QTY.
+function collectRows(data: unknown): R[] {
+  const rows: R[] = [];
+  const seen = new Set<unknown>();
+  function visit(node: unknown, depth: number): void {
+    if (depth > 6 || !node || typeof node !== 'object' || seen.has(node) || rows.length > 20000) return;
+    seen.add(node);
+    if (Array.isArray(node)) {
+      for (const child of node) visit(child, depth + 1);
+      return;
+    }
+    const o = asObject(node);
+    if (!o) return;
+    const plu = value(o, ['plu', 'PLU', 'kdPlu', 'kd_plu', 'itemCode', 'item_code']);
+    const qty = value(o, ['qty', 'QTY', 'Qty', 'quantity', 'qtyJual', 'qty_jual', 'total_qty', 'qtySale', 'saleQty']);
+    if (plu !== undefined && qty !== undefined) {
+      rows.push(o);
+      return; // hindari menghitung detail yang sama 2 kali
+    }
+    for (const [k, child] of Object.entries(o)) {
+      if (/^(data|items|rows|result|results|transactions|details|detail|dataList|list|records|content|response|payload)$/i.test(k)) {
+        visit(child, depth + 1);
       }
     }
   }
-  return [];
+  visit(data, 0);
+  return rows;
 }
-function upstreamMessage(value: unknown): string {
-  const o = obj(value);
-  const s = getAny(o, ['message', 'msg', 'error', 'description']);
-  return textValue(s).slice(0, 550);
+function normalize(data: unknown): SaleRow[] {
+  const combined = new Map<string, SaleRow>();
+  for (const o of collectRows(data)) {
+    const plu = asText(value(o, ['plu','PLU','kdPlu','kd_plu','itemCode','item_code']));
+    const qty = quantity(value(o, ['qty','QTY','Qty','quantity','qtyJual','qty_jual','total_qty','qtySale','saleQty']));
+    if (!plu || qty === null) continue;
+    const barcode = asText(value(o, ['barcode', 'Barcode', 'ean', 'ean13']));
+    const namaBarang = asText(value(o, ['descp','desc','description','nama_barang','namaBarang','nama','itemName']));
+    const prior = combined.get(plu);
+    if (prior) {
+      prior.qty += qty;
+      prior.jumlahBaris++;
+      if (!prior.barcode) prior.barcode = barcode;
+      if (!prior.namaBarang) prior.namaBarang = namaBarang;
+    } else combined.set(plu, { plu, barcode, namaBarang, qty, jumlahBaris: 1 });
+  }
+  return [...combined.values()].sort((a,b)=>a.plu.localeCompare(b.plu,'id',{numeric:true}));
 }
-function requestHeaders(storeId: string, branchId: string): HeadersInit {
-  // Header mengikuti screenshot, termasuk Host, Connection, dan Accept-Encoding.
-  return {
-    'Content-Type': 'application/json',
-    'Accept': 'application/json',
-    'User-Agent': 'python-requests/2.28.2',
-    'Api-Key': API_KEY,
-    'App-Name': 'InventoryIntelligence',
-    'Platform': 'ANDROID',
-    'Store-Id': storeId,
-    'User-Id': HEADER_USER_ID,
-    'Branch-Id': branchId,
-    'Host': 'app.alfastore.co.id',
-    'Connection': 'Keep-Alive',
-    'Accept-Encoding': 'gzip',
+async function callUpstream(path: string, storeId: string, branchId: string, headerUser: string, body?: R): Promise<Upstream> {
+  const url = new URL(path, API_BASE);
+  const headers: Record<string,string> = {
+    'Accept': 'application/json', 'Content-Type': 'application/json',
+    'User-Agent': 'python-requests/2.28.2', 'Api-Key': API_KEY,
+    'App-Name': 'InventoryIntelligence', 'Platform': 'ANDROID',
+    'Store-Id': storeId, 'User-Id': headerUser, 'Branch-Id': branchId,
   };
-}
-async function upstream(path: string, storeId: string, branchId: string, postBody?: JSONObject): Promise<UpstreamResult> {
-  const url = new URL(path, API_ROOT);
-  const resp = await fetch(url, {
-    method: postBody ? 'POST' : 'GET',
-    headers: requestHeaders(storeId, branchId),
-    body: postBody ? JSON.stringify(postBody) : undefined,
-    cache: 'no-store',
-    signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+  const response = await fetch(url, {
+    method: body ? 'POST' : 'GET', headers, body: body ? JSON.stringify(body) : undefined,
+    cache: 'no-store', signal: AbortSignal.timeout(TIMEOUT_MS), redirect: 'manual',
   });
-  const raw = await resp.text();
-  const parsed = parseApiBody(raw);
-  const prefix = raw.trim().match(/^(\d{1,3})\^/);
-  const legacyError = prefix && prefix[1] !== '200' && prefix[1] !== '204';
-  return {
-    status: resp.status,
-    raw: raw.slice(0, 200000),
-    parsed,
-    endpoint: url.pathname,
-    ok: resp.ok && !legacyError,
-  };
-}
-function json(value: unknown, status = 200) {
-  return NextResponse.json(value, {
-    status,
-    headers: { 'Cache-Control': 'no-store, private, max-age=0', 'X-Content-Type-Options': 'nosniff' },
-  });
-}
-
-/** Pekerjaan per-bon dibatasi concurrency supaya layanan tidak dibanjiri permintaan. */
-async function mapPool<T, U>(list: T[], limit: number, fn: (item: T) => Promise<U>): Promise<U[]> {
-  const output: U[] = Array(list.length);
-  let idx = 0;
-  await Promise.all(Array.from({ length: Math.min(limit, list.length) }, async () => {
-    while (idx < list.length) {
-      const at = idx++;
-      output[at] = await fn(list[at]);
-    }
-  }));
-  return output;
+  const text = (await response.text()).slice(0, 300000);
+  const parsed = decode(text);
+  const ok = response.ok && (!parsed.legacyStatus || ['200','201','204'].includes(parsed.legacyStatus));
+  return { status: response.status, ok, text, data: parsed.data, format: parsed.format,
+    path: url.pathname, contentType: response.headers.get('content-type') || '' };
 }
 
 export async function GET(req: NextRequest) {
-  const params = req.nextUrl.searchParams;
-  const storeId = (params.get('storeId') || 'M865').trim().toUpperCase();
-  const nik = (params.get('nik') || params.get('userId') || '').trim();
-  const dateTx = (params.get('dateTx') || dateWIB()).trim();
-  const branchId = (params.get('branchId') || DEFAULT_BRANCH_ID).trim().toUpperCase();
-  const mode = params.get('mode') === 'report' ? 'report' : 'detail';
-  const page = Math.min(100, Math.max(1, Number.parseInt(params.get('page') || '1', 10) || 1));
-  const limit = Math.min(MAX_BON_PER_PAGE, Math.max(1, Number.parseInt(params.get('limit') || '50', 10) || 50));
-  const periode1 = (params.get('periode1') || ddmmyyyy(dateTx)).trim();
-  const periode2 = (params.get('periode2') || '').trim();
-  // Buka endpoint tanpa NIK untuk mengecek deployment (bukan 404).
-  if (!nik) return json({
-    ok: true, status: 'route-ready',
-    message: 'Route penjualan per NIK aktif. Masukkan storeId, nik, dan dateTx untuk mengambil data.',
-    path: '/api/penjualan_per_nik',
-    apiKeyConfigured: Boolean(API_KEY),
-    accessTokenRequired: Boolean(SALES_ACCESS_TOKEN),
-    example: '/api/penjualan_per_nik?storeId=M865&nik=20020884&dateTx=2026-11-18&branchId=MZ01'
+  const p = req.nextUrl.searchParams;
+  const nik = (p.get('nik') || p.get('userId') || '').trim();
+  const storeId = (p.get('storeId') || '').trim().toUpperCase();
+  const dateTx = (p.get('dateTx') || todayWib()).trim();
+  const branchId = (p.get('branchId') || DEFAULT_BRANCH_ID).trim().toUpperCase();
+  const mode = p.get('mode') === 'transaction' ? 'transaction' : 'report';
+  const billNoText = (p.get('billNo') || '').trim();
+
+  if (!nik || p.get('mode') === 'health') return json({
+    ok: true, status: 'route-ready', version: VERSION, path: '/api/penjualan_per_nik',
+    message: 'Route aktif. Mode report memakai penjualan_per_kasir, bukan so/login/cek_login.',
+    apiKeyConfigured: Boolean(API_KEY), accessTokenRequired: Boolean(AUTH_TOKEN),
+    modes: ['report','transaction'],
+    example: '/api/penjualan_per_nik?storeId=M865&nik=20020884&dateTx=2026-11-18&branchId=MZ01&mode=report',
+    exampleTransaction: '/api/penjualan_per_nik?storeId=M865&nik=20020884&dateTx=2026-11-18&branchId=MZ01&mode=transaction&billNo=1',
   });
-  // Opsional tetapi sangat disarankan: batasi akses endpoint per-NIK.
-  if (SALES_ACCESS_TOKEN && req.headers.get('x-access-token') !== SALES_ACCESS_TOKEN) {
-    return json({ ok: false, message: 'Token akses tidak valid. Isi token dari SALES_ACCESS_TOKEN di halaman tes.' }, 401);
-  }
-  if (!/^[A-Z0-9]{4,8}$/.test(storeId)) return json({ ok: false, message: 'storeId wajib 4-8 huruf/angka.' }, 400);
-  if (!/^\d{1,12}$/.test(nik)) return json({ ok: false, message: 'NIK wajib angka (1-12 digit).' }, 400);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateTx) || !Number.isFinite(Date.parse(`${dateTx}T12:00:00Z`))) {
-    return json({ ok: false, message: 'dateTx harus yyyy-MM-dd.' }, 400);
-  }
-  if (!/^[A-Z0-9_-]{2,12}$/.test(branchId)) return json({ ok: false, message: 'branchId tidak valid.' }, 400);
-  if (mode === 'report' && (!/^\d{2}-\d{2}-\d{4}$/.test(periode1) || (periode2 && !/^\d{2}-\d{2}-\d{4}$/.test(periode2)))) {
-    return json({ ok: false, message: 'periode1/2 harus dd-MM-yyyy.' }, 400);
-  }
-  if (!API_KEY) return json({ ok: false, message: 'ALFA_API_KEY belum disetel di Vercel Environment Variables.' }, 503);
+  if (!/^[A-Z0-9]{4,8}$/.test(storeId)) return json({ok:false,message:'storeId wajib 4-8 karakter alfanumerik.'},400);
+  if (!/^\d{1,12}$/.test(nik)) return json({ok:false,message:'nik wajib 1-12 digit angka.'},400);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateTx) || Number.isNaN(Date.parse(`${dateTx}T12:00:00Z`)))
+    return json({ok:false,message:'dateTx wajib yyyy-MM-dd.'},400);
+  if (!/^[A-Z0-9_-]{2,12}$/.test(branchId)) return json({ok:false,message:'branchId tidak valid.'},400);
+  if (!API_KEY) return json({ok:false,message:'ALFA_API_KEY belum disetel di Vercel.'},503);
+  // Penting untuk data transaksi karyawan: wajibkan token privat terpisah dari Api-Key Alfastore.
+  if (!AUTH_TOKEN) return json({ok:false,message:'SALES_ACCESS_TOKEN belum disetel di Vercel. Tambahkan token privat untuk mengamankan data transaksi.'},503);
+  if (req.headers.get('x-access-token') !== AUTH_TOKEN)
+    return json({ok:false,message:'X-Access-Token tidak valid / tidak diberikan.'},401);
 
+  const headerUser = (process.env.ALFA_USER_ID || nik).trim();
+  const periode1 = isoToDmy(dateTx);
+  let endpoint: string;
+  let body: R | undefined;
+  if (mode === 'transaction') {
+    const billNo = Number(billNoText);
+    if (!/^\d{1,8}$/.test(billNoText) || !Number.isSafeInteger(billNo) || billNo < 1)
+      return json({ok:false,mode,message:'Mode transaction memerlukan billNo angka positif yang diketahui dari data resmi.'},400);
+    endpoint = 'pos/transaksi/retur/get_transaction';
+    body = { storeId, dateTx, userId: nik, billNo };
+  } else {
+    // Endpoint yang benar-benar ditemukan sebagai string di APK THOR v15.1.1.
+    endpoint = `rpt/laporan/penjualan_per_kasir?${new URLSearchParams({storeId,userId:nik,periode1})}`;
+  }
   try {
-    if (mode === 'report') {
-      // Di APK: StoreReportReportActivity, rpt/laporan/penjualan_per_kasir
-      const search = new URLSearchParams({ storeId, userId: nik, periode1 });
-      if (periode2) search.set('periode2', periode2);
-      const path = `rpt/laporan/penjualan_per_kasir?${search}`;
-      const res = await upstream(path, storeId, branchId);
-      if (!res.ok) return json({ ok: false, mode, source: 'alfastore', upstreamStatus: res.status,
-        endpoint: `${API_ROOT}rpt/laporan/penjualan_per_kasir`, message: upstreamMessage(res.parsed) || 'Laporan gagal dibuka', raw: res.raw }, 502);
-      return json({ ok: true, mode, nik, storeId, dateTx, periode1, periode2: periode2 || null,
-        endpoint: `${API_ROOT}rpt/laporan/penjualan_per_kasir`, format: res.raw.trim().startsWith('<') ? 'html' : 'json-or-text',
-        result: res.parsed, raw: res.raw });
-    }
-
-    // Langkah 1 APK: so/login/cek_login untuk membaca dataUser.bill_no & nama kasir.
-    const checkParams = new URLSearchParams({
-      storeId, nik, clientDate: `${dateTx} 23:59:59`, version_app: 'V.2021.1.1',
-    });
-    const checkPath = `so/login/cek_login?${checkParams}`;
-    const login = await upstream(checkPath, storeId, branchId);
-    if (!login.ok) return json({ ok: false, mode, step: 'cek_login', upstreamStatus: login.status,
-      message: upstreamMessage(login.parsed) || 'Pengecekan NIK ditolak Alfastore.',
-      endpoint: `${API_ROOT}so/login/cek_login`, raw: login.raw }, 502);
-    const top = obj(login.parsed);
-    const user = obj(getAny(top, ['dataUser', 'data_user'])) || obj(getAny(obj(top?.data), ['dataUser', 'data_user'])) || obj(top?.data);
-    if (!user) return json({ ok: false, mode, step: 'cek_login',
-      message: 'Respons cek_login tidak memuat dataUser. Periksa NIK, toko, tanggal, atau hak akses.',
-      endpoint: `${API_ROOT}so/login/cek_login`, raw: login.raw }, 502);
-
-    const nama = textValue(getAny(user, ['name', 'nick_name', 'nama', 'namaKasir']));
-    const billNo = Math.max(0, Math.min(100000, Math.trunc(numberValue(getAny(user, ['bill_no', 'billNo'])))));
-    const start = (page - 1) * limit + 1;
-    const end = Math.min(start + limit - 1, billNo);
-    const bonNumbers = Array.from({ length: Math.max(0, end - start + 1) }, (_, i) => start + i);
-
-    // Langkah 2 APK: pos/transaksi/retur/get_transaction, POST JSON per nomor bon.
-    const errors: Array<{ billNo: number; status: number; message: string }> = [];
-    const rowsPerBon = await mapPool(bonNumbers, CONCURRENCY, async (bonNo) => {
-      try {
-        const res = await upstream('pos/transaksi/retur/get_transaction', storeId, branchId,
-          { storeId, dateTx, userId: nik, billNo: bonNo });
-        if (!res.ok) {
-          errors.push({ billNo: bonNo, status: res.status, message: upstreamMessage(res.parsed) || 'Permintaan detail gagal' });
-          return [] as JSONObject[];
-        }
-        return payloadRows(res.parsed);
-      } catch (e) {
-        errors.push({ billNo: bonNo, status: 0, message: e instanceof Error ? e.message : 'Network error' });
-        return [] as JSONObject[];
-      }
-    });
-
-    const combined = new Map<string, SaleItem & { bons: Set<number> }>();
-    rowsPerBon.forEach((rows, ix) => {
-      const bonNo = bonNumbers[ix];
-      for (const r of rows) {
-        const plu = textValue(getAny(r, ['plu', 'PLU', 'kode_plu', 'itemCode']));
-        if (!plu) continue;
-        const barcode = textValue(getAny(r, ['barcode', 'Barcode', 'ean']));
-        const desc = textValue(getAny(r, ['desc', 'descp', 'description', 'nama_barang', 'namaBarang']));
-        const qty = numberValue(getAny(r, ['qty', 'QTY', 'quantity', 'qty_jual', 'qtyJual']));
-        const existing = combined.get(plu);
-        if (existing) {
-          existing.qty += qty;
-          if (!existing.barcode && barcode) existing.barcode = barcode;
-          if (!existing.namaBarang && desc) existing.namaBarang = desc;
-          existing.bons.add(bonNo);
-        } else {
-          combined.set(plu, { plu, barcode, namaBarang: desc, qty, jumlahBon: 0, bons: new Set([bonNo]) });
-        }
-      }
-    });
-
-    // Langkah 3 APK: sis/master/inventory/lov_items untuk nama/barcode yang belum tersedia.
-    const needInfo = [...combined.values()].filter(x => !x.namaBarang || !x.barcode).slice(0, 25);
-    await mapPool(needInfo, 4, async (item) => {
-      const searchValue = item.barcode || item.plu;
-      try {
-        const q = new URLSearchParams({ storeId, searchValue });
-        const res = await upstream(`sis/master/inventory/lov_items?${q}`, storeId, branchId);
-        const choices = payloadRows(res.parsed);
-        const found = choices.find(x => textValue(getAny(x, ['plu', 'PLU'])) === item.plu) || choices[0];
-        if (found) {
-          item.namaBarang ||= textValue(getAny(found, ['descp', 'desc', 'description', 'nama_barang']));
-          item.barcode ||= textValue(getAny(found, ['barcode', 'ean']));
-        }
-      } catch { /* Optional enrichment; QTY tetap bisa ditampilkan. */ }
-      return null;
-    });
-
-    const items = [...combined.values()].map(({ bons, ...rest }) => ({ ...rest, jumlahBon: bons.size }))
-      .sort((a, b) => a.plu.localeCompare(b.plu, 'id', { numeric: true }));
+    const up = await callUpstream(endpoint, storeId, branchId, headerUser, body);
+    const endpointPath = up.path; // hanya path, tidak membocorkan header
+    if (!up.ok) return json({
+      ok:false, mode, step: mode==='report'?'penjualan_per_kasir':'get_transaction',
+      upstreamStatus:up.status, endpoint:`${API_BASE}${endpointPath.replace(/^\/prd\/api\//,'')}`,
+      message:up.format==='html' ? 'Server Alfastore mengembalikan HTML, bukan data API. Endpoint mungkin tidak tersedia untuk akses ini.'
+        : asText(value(asObject(up.data),['message','msg','error','description'])) || 'Permintaan ditolak oleh Alfastore.',
+      responsePreview:up.text.slice(0,500),
+      hint:'404 upstream tidak diselesaikan dengan mengganti nama route Vercel. Konfirmasi endpoint dan izin akses pada sistem resmi Alfastore.',
+    }, 502);
+    const items = normalize(up.data);
+    const qtyAvailable = items.length > 0;
     return json({
-      ok: true, mode, storeId, nik, namaKasir: nama, dateTx, branchId,
-      totalBonDariLogin: billNo, bonDiminta: bonNumbers.length, bonBerhasil: bonNumbers.length - errors.length,
-      totalPLU: items.length, totalQty: items.reduce((acc, row) => acc + row.qty, 0),
-      items, page, limit, hasMore: end < billNo, errors: errors.slice(0, 25),
-      partial: errors.length > 0 || end < billNo,
-      endpoints: [
-        `${API_ROOT}so/login/cek_login`,
-        `${API_ROOT}pos/transaksi/retur/get_transaction`,
-        `${API_ROOT}sis/master/inventory/lov_items`,
-      ],
-      note: 'Jumlah QTY hanya dari bon yang berhasil diambil pada halaman ini. Tidak menyatakan 0 penjualan jika ada bon gagal.',
+      ok:true, status:'upstream-connected', version:VERSION, mode,
+      source:'Alfastore', storeId, nik, dateTx, branchId, periode1,
+      upstreamStatus:up.status, endpoint:endpointPath,
+      format:up.format, qtyAvailable,
+      totalPLU:items.length, totalQty:qtyAvailable?items.reduce((sum,x)=>sum+x.qty,0):null,
+      items,
+      note:qtyAvailable
+        ? 'QTY dihitung dari baris item respons Alfastore yang memuat PLU dan QTY.'
+        : 'Respons diterima tetapi tidak ditemukan pasangan PLU+QTY. Jangan menganggap QTY = 0.',
+      report:up.data,
     });
-  } catch (error) {
-    return json({ ok: false, message: 'Gagal menghubungi layanan Alfastore. Cek header, jaringan, hak akses dan URL upstream.',
-      detail: error instanceof Error ? error.message : 'Unknown server error' }, 502);
+  } catch (err) {
+    return json({ok:false,mode,message:'Koneksi upstream gagal atau timeout.',
+      detail:err instanceof Error?err.message:'Unknown error'},502);
   }
 }

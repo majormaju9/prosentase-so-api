@@ -9,6 +9,7 @@
  * Body berdasarkan APK: storeId, dateTx, userId, billNo
  * API key hanya berasal dari variabel lingkungan server ALFA_API_KEY.
  *
+ * Perbaikan: header CORS untuk alfastore.my.id, diagnostik kegagalan bon, dan perlindungan scan massal.
  * PERHATIAN: file ini menggantikan /api/sql jika route itu sudah ada.
  * Simpan salinan route /api/sql lama sebelum mengganti karena mungkin dipakai fitur lain.
  */
@@ -16,7 +17,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-const VERSION = '2026-11-18-thor-plu-scan-v3';
+const VERSION = '2026-11-18-cors-detail-diagnostic-v4';
 const TRANSACTION_PATH = 'pos/transaksi/retur/get_transaction';
 const UPSTREAM_BASE = 'https://app.alfastore.co.id/prd/api/';
 const REPORT_PATH = 'rpt/laporan/penjualan_per_kasir';
@@ -262,6 +263,7 @@ type BillResult = {
   message?: string;
   upstreamStatus?: number;
   responseKeys?: string[];
+  errorCode?: string;
 };
 
 function safeFirst(obj: Record<string, unknown>, keys: string[]): unknown {
@@ -372,24 +374,29 @@ async function fetchBill(storeId:string,nik:string,dateTx:string,branchId:string
     if (!r.ok || r.status >= 300) {
       const msg=parseError(raw) || `HTTP ${r.status}`;
       const notFound = /bon.{0,36}(tidak|not).{0,18}(ditemukan|found)|transaction not found|data tidak ditemukan/i.test(msg);
-      return {billNo,status:notFound?'not-found':'error',items:[],message:msg,upstreamStatus:r.status};
+      const html = /^\s*</.test(raw);
+      const code = html && r.status === 404 ? 'ENDPOINT_404_HTML' : 'UPSTREAM_HTTP_'+r.status;
+      const description = code === 'ENDPOINT_404_HTML'
+        ? 'Endpoint detail transaksi mengirim HTTP 404 HTML. Jalur API kemungkinan tidak tersedia untuk koneksi ini; mengganti rentang bon tidak memperbaiki 404 endpoint.'
+        : `Alfastore HTTP ${r.status}: ${msg}`;
+      return {billNo,status:notFound?'not-found':'error',items:[],message:notFound?msg:description.slice(0,250),upstreamStatus:r.status,errorCode:notFound?'BILL_NOT_FOUND':code};
     }
     if (!json || typeof json !== 'object') {
-      return {billNo,status:'error',items:[],message:'Respons detail bukan JSON valid, atau HTML error (meskipun HTTP 200).',upstreamStatus:r.status};
+      return {billNo,status:'error',items:[],message:'Endpoint detail mengembalikan HTML/teks, bukan JSON transaksi, meskipun HTTP 200.',upstreamStatus:r.status,errorCode:'NON_JSON_RESPONSE'};
     }
     const obj=json as Record<string,unknown>;
     const successFlag=obj.ok === false || obj.success === false || (typeof obj.status==='string' && /^(error|failed)$/i.test(obj.status));
     if (successFlag) {
-      return {billNo,status:'error',items:[],message:str(obj.message || obj.error).slice(0,220)||'API menolak bon.',upstreamStatus:r.status};
+      return {billNo,status:'error',items:[],message:str(obj.message || obj.error).slice(0,220)||'API menolak bon.',upstreamStatus:r.status,errorCode:'UPSTREAM_REJECTED'};
     }
     const items=parseSaleItems(json,billNo);
     if (!items.length) {
-      return {billNo,status:'empty',items:[],message:'JSON diterima, tetapi pasangan PLU + qty tidak ditemukan.',upstreamStatus:r.status,responseKeys:Object.keys(obj).slice(0,20)};
+      return {billNo,status:'empty',items:[],message:'JSON diterima, tetapi pasangan PLU + qty tidak ditemukan.',upstreamStatus:r.status,responseKeys:Object.keys(obj).slice(0,20),errorCode:'PLU_SCHEMA_NOT_FOUND'};
     }
     return {billNo,status:'found',items,upstreamStatus:r.status};
   } catch(e) {
     const err=e instanceof Error ? e.message : 'Koneksi gagal';
-    return {billNo,status:'error',items:[],message:err.slice(0,200)};
+    return {billNo,status:'error',items:[],message:err.slice(0,200),errorCode:'UPSTREAM_CONNECTION_ERROR'};
   }
 }
 function aggregate(results:BillResult[]):SaleItem[] {
@@ -409,7 +416,7 @@ function aggregate(results:BillResult[]):SaleItem[] {
 }
 function dateTodayWib():string { return wibToday(); }
 
-export async function GET(request:Request):Promise<Response> {
+async function handleGet(request:Request):Promise<Response> {
   const p = new URL(request.url).searchParams;
   const mode=(p.get('mode') || 'report').toLowerCase();
   if (mode==='health' || (!p.get('nik') && !p.get('storeId'))) {
@@ -441,7 +448,7 @@ export async function GET(request:Request):Promise<Response> {
       endpoint:`/prd/api/${TRANSACTION_PATH}`,billNo,items,pluAvailable:items.length>0,
       totalPLU:items.length,totalQty:items.length ? items.reduce((v,i)=>v+i.qty,0):null,
       message:result.message || (items.length?'PLU bon ditemukan.':'Tidak ada PLU untuk bon ini.'),
-      responseKeys:result.responseKeys,upstreamStatus:result.upstreamStatus,
+      responseKeys:result.responseKeys,upstreamStatus:result.upstreamStatus,errorCode:result.errorCode,
       note:'Detail hanya mencakup billNo yang diminta. Nama/barcode ditampilkan jika tersedia pada respons.'},result.status==='error'?502:200);
   }
 
@@ -451,31 +458,97 @@ export async function GET(request:Request):Promise<Response> {
   if (!Number.isInteger(from)||!Number.isInteger(to)||from<1||to<from||to-from+1>25||to>2000)
     return sendJson({ok:false,code:'INVALID_BILL_RANGE',message:'Rentang billFrom/billTo harus 1-2000 dan maksimal 25 nomor bon per permintaan.'},400);
   const numbers=Array.from({length:to-from+1},(_,i)=>String(from+i));
-  const out:BillResult[]=new Array(numbers.length);
-  let cursor=0;
-  const worker=async()=>{
-    while(cursor < numbers.length) {
-      const index=cursor++;
-      out[index]=await fetchBill(storeId,nik,dateTx,branchId,numbers[index]);
-    }
-  };
-  await Promise.all(Array.from({length:Math.min(4,numbers.length)},()=>worker()));
-  const found=out.filter(x=>x.status==='found');
-  const empty=out.filter(x=>x.status==='empty');
-  const errors=out.filter(x=>x.status==='error');
-  const notFound=out.filter(x=>x.status==='not-found');
-  const items=aggregate(out);
+  const out:BillResult[]=[];
+  // Uji 1-3 bon dahulu. Hindari 70 kegagalan identik ketika endpoint tidak tersedia.
+  // No. Bon laporan adalah JUMLAH bon, bukan nomor bon urut.
+  const first=await fetchBill(storeId,nik,dateTx,branchId,numbers[0]);
+  out.push(first);
+  const blockingCode = first.status==='error' && (
+    ['ENDPOINT_404_HTML','NON_JSON_RESPONSE','UPSTREAM_HTTP_400','UPSTREAM_HTTP_401','UPSTREAM_HTTP_403',
+      'UPSTREAM_HTTP_405','UPSTREAM_HTTP_415','UPSTREAM_HTTP_422','UPSTREAM_REJECTED'].includes(first.errorCode||'')
+    || first.upstreamStatus === 403 || first.upstreamStatus === 401
+  );
+  if (blockingCode) {
+    return sendJson({
+      ok:false,status:'detail-endpoint-rejected',mode:'plu',version:VERSION,stopRecommended:true,
+      code:first.errorCode||'ENDPOINT_UNAVAILABLE',
+      message:`Uji bon ${first.billNo} gagal: ${first.message}. Pemindaian dihentikan untuk menghindari permintaan gagal berulang. Coba mode=detail dengan nomor bon asli, dan periksa endpoint/detail parameter.`,
+      storeId,nik,dateTx,branchId,endpoint:`/prd/api/${TRANSACTION_PATH}`,
+      billFrom:from,billTo:to,requestedBon:numbers.length,attemptedBon:1,
+      foundBon:[],emptyBon:[],notFoundBon:[],failedBon:[first],diagnostic:[],items:[],
+      pluAvailable:false,totalPLU:null,totalQty:null,complete:false,
+    },502);
+  }
+  // Bila 3 nomor awal semuanya tidak ditemukan, hentikan scan massal secara konservatif.
+  // Pengguna dapat menguji billNo sebenarnya tanpa menebak nomor bon urut.
+  for(let i=1;i<Math.min(3,numbers.length);i++) {
+    out.push(await fetchBill(storeId,nik,dateTx,branchId,numbers[i]));
+    if (out[i].status==='error' && ['ENDPOINT_404_HTML','NON_JSON_RESPONSE','UPSTREAM_HTTP_401','UPSTREAM_HTTP_403'].includes(out[i].errorCode||'')) break;
+  }
+  const initialBroken = out.some(x=>x.status==='error' && ['ENDPOINT_404_HTML','NON_JSON_RESPONSE','UPSTREAM_HTTP_401','UPSTREAM_HTTP_403'].includes(x.errorCode||''));
+  const allNotFound = numbers.length>3 && out.length===3 && out.every(x=>x.status==='not-found');
+  if (!initialBroken && !allNotFound) {
+    let cursor=out.length;
+    const worker=async()=>{
+      while(cursor<numbers.length) {
+        const index=cursor++;
+        out[index]=await fetchBill(storeId,nik,dateTx,branchId,numbers[index]);
+      }
+    };
+    await Promise.all(Array.from({length:Math.min(3,numbers.length-out.length)},()=>worker()));
+  }
+  const found=out.filter(x=>x?.status==='found');
+  const empty=out.filter(x=>x?.status==='empty');
+  const errors=out.filter(x=>x?.status==='error');
+  const notFound=out.filter(x=>x?.status==='not-found');
+  const items=aggregate(out.filter(Boolean));
+  const stopRecommended=initialBroken||allNotFound;
+  const firstError=errors[0];
   return sendJson({
-    ok:found.length>0, status:found.length?'partial-detail':'no-detail',mode:'plu',version:VERSION,
+    ok:found.length>0, status:found.length?'partial-detail':stopRecommended?'scan-stopped':'no-detail',mode:'plu',version:VERSION,
     storeId,nik,dateTx,branchId,endpoint:`/prd/api/${TRANSACTION_PATH}`,
-    billFrom:from,billTo:to,requestedBon:numbers.length,
+    billFrom:from,billTo:to,requestedBon:numbers.length,attemptedBon:out.filter(Boolean).length,
     foundBon:found.map(x=>x.billNo),emptyBon:empty.map(x=>x.billNo),notFoundBon:notFound.map(x=>x.billNo),
-    failedBon:errors.map(x=>({billNo:x.billNo,message:x.message,upstreamStatus:x.upstreamStatus})),
-    diagnostic:empty.slice(0,2).map(x=>({billNo:x.billNo,responseKeys:x.responseKeys})),
-    items,pluAvailable:items.length>0,totalPLU:items.length,
+    failedBon:errors.map(x=>({billNo:x.billNo,message:x.message,upstreamStatus:x.upstreamStatus,errorCode:x.errorCode})),
+    diagnostic:empty.slice(0,2).map(x=>({billNo:x.billNo,responseKeys:x.responseKeys,errorCode:x.errorCode})),
+    items,pluAvailable:items.length>0,totalPLU:items.length||null,
     totalQty:items.length?items.reduce((sum,x)=>sum+x.qty,0):null,
-    complete:false,
-    note:'Ini hanya pemindaian nomor bon dalam rentang yang dipilih. No. Bon pada laporan rekap adalah JUMLAH, bukan daftar billNo. QTY hasil ini belum tentu sama dengan total rekap; belum berarti seluruh PLU telah ditemukan.',
-    message:found.length?`Berhasil membaca ${found.length} bon dalam rentang ${from}-${to}.`:'Belum ada PLU yang dapat dibaca dalam rentang ini. Lihat failedBon/diagnostic dan coba mode=detail dengan billNo nyata.',
+    complete:false,stopRecommended,firstErrorCode:firstError?.errorCode,
+    note:'No. Bon di laporan rekap adalah JUMLAH bon, bukan daftar nomor bon. Scan hanya uji nomor perkiraan; tidak menjamin PLU lengkap.',
+    message:stopRecommended
+      ? (allNotFound ? `Tiga nomor awal ${from}-${from+2} tidak ditemukan. Dihentikan agar tidak mengirim puluhan percobaan bon yang belum terbukti benar. Gunakan billNo asli.` : `Pemindaian dihentikan karena error detail: ${firstError?.message||'Endpoint belum tersedia'}.`)
+      : found.length?`Berhasil membaca ${found.length} bon dalam rentang ${from}-${to}.`:
+        `Belum ada PLU yang dapat dibaca. Bon yang gagal: ${errors.length}; bon tidak ditemukan: ${notFound.length}; respons tanpa PLU: ${empty.length}.`,
   },found.length?200:502);
+}
+
+
+/** CORS khusus website cPanel milik pengguna; tidak membuka akses semua origin. */
+function corsHeaders(request: Request): Headers {
+  const headers=new Headers();
+  const origin=request.headers.get('origin')||'';
+  if (['https://alfastore.my.id','https://www.alfastore.my.id',
+       'https://majormaju9-prosentase-so-api.vercel.app'].includes(origin) ||
+       /^http:\/\/localhost(?::\d+)?$/.test(origin)) {
+    headers.set('Access-Control-Allow-Origin', origin);
+    headers.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    headers.set('Access-Control-Allow-Headers', 'Accept, Content-Type');
+    headers.set('Access-Control-Max-Age', '3600');
+  }
+  headers.set('Vary', 'Origin');
+  return headers;
+}
+export async function OPTIONS(request: Request): Promise<Response> {
+  return new Response(null,{status:204,headers:corsHeaders(request)});
+}
+export async function GET(request: Request): Promise<Response> {
+  try {
+    const response=await handleGet(request);
+    corsHeaders(request).forEach((value,key)=>response.headers.set(key,value));
+    return response;
+  } catch (err) {
+    const response=sendJson({ok:false,code:'UNHANDLED_ERROR',message:'Kesalahan internal saat memproses permintaan.'},500);
+    corsHeaders(request).forEach((value,key)=>response.headers.set(key,value));
+    return response;
+  }
 }

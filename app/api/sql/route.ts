@@ -1,11 +1,11 @@
 /**
- * Perbaikan upstream 404 cek_login untuk THOR v15.1.1.
+ * Endpoint penjualan per NIK THOR v15.1.1 — langsung tanpa proses login.
  * Letakkan hanya di: app/api/penjualan_per_nik/route.ts
  * Tidak mengubah /api/sql (berpotensi digunakan fitur Clerek/SQL lain).
  *
  * mode=report (default): GET rpt/laporan/penjualan_per_kasir
  * mode=transaction&billNo=1: POST pos/transaksi/retur/get_transaction
- * Tidak memanggil endpoint so/login/cek_login yang memberi 404 di server pengguna.
+ * Kedua mode langsung memanggil endpoint laporan/transaksi Alfastore.
  *
  * Header kunci tetap server-side melalui ALFA_API_KEY. Jangan commit kunci!
  */
@@ -16,10 +16,9 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 const API_BASE = 'https://app.alfastore.co.id/prd/api/';
-const VERSION = '2026-11-18-upstream404-report-first';
+const VERSION = '2026-11-18-direct-no-login';
 const API_KEY = process.env.ALFA_API_KEY || '';
 const DEFAULT_BRANCH_ID = process.env.ALFA_BRANCH_ID || 'MZ01';
-const AUTH_TOKEN = process.env.SALES_ACCESS_TOKEN || '';
 const TIMEOUT_MS = 18000;
 
 type R = Record<string, unknown>;
@@ -132,8 +131,8 @@ export async function GET(req: NextRequest) {
 
   if (!nik || p.get('mode') === 'health') return json({
     ok: true, status: 'route-ready', version: VERSION, path: '/api/penjualan_per_nik',
-    message: 'Route aktif. Mode report memakai penjualan_per_kasir, bukan so/login/cek_login.',
-    apiKeyConfigured: Boolean(API_KEY), accessTokenRequired: Boolean(AUTH_TOKEN),
+    message: 'Route aktif. Masukkan storeId, nik, dan dateTx untuk langsung memuat laporan penjualan tanpa proses login.',
+    apiKeyConfigured: Boolean(API_KEY), loginRequired: false,
     modes: ['report','transaction'],
     example: '/api/penjualan_per_nik?storeId=M865&nik=20020884&dateTx=2026-11-18&branchId=MZ01&mode=report',
     exampleTransaction: '/api/penjualan_per_nik?storeId=M865&nik=20020884&dateTx=2026-11-18&branchId=MZ01&mode=transaction&billNo=1',
@@ -144,10 +143,6 @@ export async function GET(req: NextRequest) {
     return json({ok:false,message:'dateTx wajib yyyy-MM-dd.'},400);
   if (!/^[A-Z0-9_-]{2,12}$/.test(branchId)) return json({ok:false,message:'branchId tidak valid.'},400);
   if (!API_KEY) return json({ok:false,message:'ALFA_API_KEY belum disetel di Vercel.'},503);
-  // Penting untuk data transaksi karyawan: wajibkan token privat terpisah dari Api-Key Alfastore.
-  if (!AUTH_TOKEN) return json({ok:false,message:'SALES_ACCESS_TOKEN belum disetel di Vercel. Tambahkan token privat untuk mengamankan data transaksi.'},503);
-  if (req.headers.get('x-access-token') !== AUTH_TOKEN)
-    return json({ok:false,message:'X-Access-Token tidak valid / tidak diberikan.'},401);
 
   const headerUser = (process.env.ALFA_USER_ID || nik).trim();
   const periode1 = isoToDmy(dateTx);

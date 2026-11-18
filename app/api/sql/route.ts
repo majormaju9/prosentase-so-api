@@ -1,299 +1,294 @@
 /**
- * Vercel / Next.js App Router
- * Install at: app/api/sql/route.ts
- * Public URL: https://majormaju9-prosentase-so-api.vercel.app/api/sql
+ * THOR Penjualan per NIK - API Vercel
+ * Path: app/api/sql/route.ts
+ * Tidak memakai so/login/cek_login atau input bon awal/akhir.
  *
- * Headers stay on this server only. DO NOT paste Api-Key into index.html.
- * Note: This route contains a server-side key, so use a private repository and server-side rate limiting.
- * Rotate the key if this source has ever been published.
+ * PENJELASAN TEKNIS: APK THOR memakai bill_no untuk get_transaction.
+ * Sumber laporan di bawah dicoba untuk mencari nomor bon / data item secara otomatis.
+ * Jika keduanya tidak menyediakannya, API mengembalikan error yang jujur;
+ * tidak mengklaim "semua penjualan" atau mengembalikan sukses palsu.
+ *
+ * Header disimpan di server. JANGAN unggah route.ts ke public_html atau repo publik.
  */
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-const UPSTREAM_ORIGIN = 'https://app.alfastore.co.id';
-const UPSTREAM_ROOT = `${UPSTREAM_ORIGIN}/prd/api/`;
-const PROD_ORIGIN = 'https://majormaju9-prosentase-so-api.vercel.app';
+const BASE = 'https://app.alfastore.co.id/prd/api/';
+const TEST_ORIGIN = 'https://majormaju9-prosentase-so-api.vercel.app';
+// Key lama dipertahankan dari file route.ts yang dikirim sebelumnya.
+// Sebaiknya pindahkan nilainya ke environment variable SQL_UPSTREAM_API_KEY.
+const LEGACY_API_KEY = 'iVOZX9MLmKrj1L8R23uF1aryMR1vGMXG';
+const KEY = process.env.SQL_UPSTREAM_API_KEY || LEGACY_API_KEY;
+const APP_NAME = 'InventoryIntelligence';
+const TIMEOUT = 12500;
+const MAX_BON = 300; // Batas kerja untuk menjaga API upstream; bukan klaim cakupan semua bon.
+const MAX_BATCH = 12;
+const MAX_ROWS = 20000;
 
-// Headers from the user's test screenshot. These are SERVER-SIDE only.
-const AUTH = {
-  apiKey: 'iVOZX9MLmKrj1L8R23uF1aryMR1vGMXG',
-  appName: 'InventoryIntelligence',
-  platform: 'ANDROID',
-  userAgent: 'python-requests/2.28.2',
-  defaultBranchId: 'MZ01',
-} as const;
-
-const MAX_BILL_NO = 250; // Batas pengujian nomor bon manual tanpa mencari jumlah bon melalui login.
-const BATCH_SIZE = 12;
-const PARALLEL_FETCHES = 6;
-const UPSTREAM_TIMEOUT_MS = 9000;
-
-type PlainObject = Record<string, unknown>;
-type Input = { storeId: string; nik: string; dateTx: string; branchId: string };
+type Obj = Record<string, unknown>;
+type ReqInput = { storeId: string; nik: string; dateTx: string; branchId: string };
 type Item = { plu: string; barcode: string; name: string; qty: number };
 
-function isObject(value: unknown): value is PlainObject {
-  return !!value && typeof value === 'object' && !Array.isArray(value);
+type SourceDiagnostic = { source: string; status: string };
+const sources = [
+  'rpt/laporan/laporan_penjualan_per_nomor_bon',
+  'rpt/laporan/penjualan_per_kasir',
+] as const;
+function obj(x: unknown): x is Obj { return x !== null && typeof x === 'object' && !Array.isArray(x); }
+function pick(o: Obj, names: string[]): unknown { for (const name of names) if (o[name] !== undefined && o[name] !== null) return o[name]; return undefined; }
+function text(x: unknown): string { return x === null || x === undefined ? '' : String(x).trim(); }
+function originAllowed(origin: string | null): boolean {
+  return !origin || origin === 'null' || origin === TEST_ORIGIN || /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d{1,5})?$/.test(origin);
 }
-
-function allowedOrigin(origin: string | null): boolean {
-  return !origin || origin === 'null' || origin === PROD_ORIGIN || /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d{1,5})?$/.test(origin);
-}
-
-function response(data: unknown, status = 200, origin: string | null = null): Response {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json; charset=utf-8',
-    'Cache-Control': 'no-store, max-age=0',
-    'X-Content-Type-Options': 'nosniff',
-    'Vary': 'Origin',
-  };
-  // Explicitly allow the deployed test page and a locally opened HTML file.
-  // CORS does not replace authentication or protect a public server endpoint.
-  if (origin && allowedOrigin(origin)) {
+function reply(data: unknown, code = 200, origin: string | null = null): Response {
+  const headers: Record<string,string> = { 'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store', 'X-Content-Type-Options':'nosniff', 'Vary':'Origin' };
+  if (origin && originAllowed(origin)) {
     headers['Access-Control-Allow-Origin'] = origin;
     headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS';
     headers['Access-Control-Allow-Headers'] = 'Content-Type';
-    headers['Access-Control-Max-Age'] = '600';
   }
-  return new Response(JSON.stringify(data), { status, headers });
+  return new Response(JSON.stringify(data), {status:code, headers});
 }
-
-function errorResponse(message: string, status = 400, origin: string | null = null): Response {
-  return response({ success: false, message }, status, origin);
+function fail(message: string, status = 400, origin: string | null = null, extra: Obj = {}): Response {
+  return reply({success:false, message, ...extra}, status, origin);
 }
-
-function checkDate(value: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-  const [y, m, d] = value.split('-').map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d));
-  return dt.getUTCFullYear() === y && dt.getUTCMonth() + 1 === m && dt.getUTCDate() === d;
+function validDate(v: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  const [y,m,d] = v.split('-').map(Number), t = new Date(Date.UTC(y,m-1,d));
+  return t.getUTCFullYear() === y && t.getUTCMonth() + 1 === m && t.getUTCDate() === d;
 }
-
-function parseInput(body: PlainObject): Input {
-  const storeId = String(body.storeId ?? '').trim().toUpperCase();
-  const nik = String(body.nik ?? body.userId ?? '').trim();
-  const dateTx = String(body.dateTx ?? '').trim();
-  const branchId = String(body.branchId ?? AUTH.defaultBranchId).trim().toUpperCase();
+function inputOf(value: Obj): ReqInput {
+  const storeId = text(value.storeId).toUpperCase();
+  const nik = text(value.nik ?? value.userId);
+  const dateTx = text(value.dateTx);
+  const branchId = text(value.branchId || 'MZ01').toUpperCase();
   if (!/^[A-Z0-9]{4,8}$/.test(storeId)) throw new Error('Kode toko harus 4–8 huruf/angka.');
   if (!/^\d{6,12}$/.test(nik)) throw new Error('NIK harus 6–12 digit angka.');
-  if (!checkDate(dateTx)) throw new Error('Tanggal wajib dalam format YYYY-MM-DD yang valid.');
-  if (!/^[A-Z0-9]{2,8}$/.test(branchId)) throw new Error('Branch ID harus 2–8 huruf/angka.');
-  return { storeId, nik, dateTx, branchId };
+  if (!validDate(dateTx)) throw new Error('Tanggal harus YYYY-MM-DD yang valid.');
+  if (!/^[A-Z0-9]{2,8}$/.test(branchId)) throw new Error('Branch ID tidak valid.');
+  return {storeId,nik,dateTx,branchId};
 }
-
-function authHeaders(input: Input): Headers {
-  const headers = new Headers({
-    'Content-Type': 'application/json',
-    'Accept': 'application/json',
-    'User-Agent': AUTH.userAgent,
-    'Api-Key': AUTH.apiKey,
-    'App-Name': AUTH.appName,
-    'Platform': AUTH.platform,
-    'Store-Id': input.storeId,
-    'User-Id': input.nik,
-    'Branch-Id': input.branchId,
-    'Accept-Encoding': 'gzip',
+function headersFor(input: ReqInput): Headers {
+  return new Headers({
+    'Content-Type':'application/json', 'Accept':'application/json',
+    'User-Agent':'python-requests/2.28.2', 'Api-Key':KEY,
+    'App-Name':APP_NAME, 'Platform':'ANDROID',
+    'Store-Id':input.storeId, 'User-Id':input.nik,
+    'Branch-Id':input.branchId, 'Accept-Encoding':'gzip',
   });
-  // Host & Connection are managed by fetch / HTTP transport automatically.
-  return headers;
 }
-
-function decodeUpstream(raw: string): unknown {
-  let source = raw.trim().replace(/^\uFEFF/, '');
-  // THOR's network helper represents responses as "200^{...}", "200^[...]".
-  // A real HTTP endpoint may instead send JSON directly.
-  const prefixed = source.match(/^(\d{3})\^([\s\S]*)$/);
-  if (prefixed) {
-    const code = Number(prefixed[1]);
-    if (code === 204) return [];
-    if (code < 200 || code >= 300) throw new Error(`Layanan ALFASTORE mengembalikan kode ${code}.`);
-    source = prefixed[2].trim();
+function parseUpstream(body: string): unknown {
+  let trimmed = body.trim().replace(/^\uFEFF/, '');
+  const prefix = /^(\d{3})\^([\s\S]*)$/.exec(trimmed);
+  if (prefix) {
+    if (+prefix[1] < 200 || +prefix[1] >= 300) throw new Error(`Kode upstream ${prefix[1]}`);
+    trimmed = prefix[2].trim();
   }
-  if (!source) return null;
-  try { return JSON.parse(source); }
-  catch { throw new Error('Respons ALFASTORE bukan JSON yang valid.'); }
+  if (!trimmed) return null;
+  try { return JSON.parse(trimmed); }
+  catch { throw new Error('Respons laporan bukan JSON (mungkin HTML atau file report).'); }
 }
-
-async function upstream(input: Input, path: string, method: 'GET'|'POST', data?: unknown): Promise<unknown> {
-  // No arbitrary URLs or paths from the browser are allowed here.
-  const allowed = ['pos/transaksi/retur/get_transaction', 'sis/master/inventory/lov_items'];
-  const endpointPath = path.split('?')[0];
-  if (!allowed.includes(endpointPath)) throw new Error('Endpoint tidak diizinkan.');
+async function requestUpstream(input: ReqInput, endpoint: string, method: 'GET'|'POST', body?: unknown): Promise<unknown> {
+  const path = endpoint.split('?')[0];
+  if (![...sources, 'pos/transaksi/retur/get_transaction', 'sis/master/inventory/lov_items'].includes(path as typeof sources[number])) throw new Error('Endpoint tidak diizinkan.');
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), TIMEOUT);
   try {
-    const upstreamResponse = await fetch(`${UPSTREAM_ROOT}${path}`, {
-      method,
-      headers: authHeaders(input),
-      body: method === 'POST' ? JSON.stringify(data ?? {}) : undefined,
-      signal: controller.signal,
-      cache: 'no-store',
-      redirect: 'error',
+    const res = await fetch(BASE+endpoint, {
+      method, headers: headersFor(input), body: method==='POST'?JSON.stringify(body ?? {}):undefined,
+      cache:'no-store', signal:controller.signal, redirect:'error',
     });
-    const raw = await upstreamResponse.text();
-    if (!upstreamResponse.ok && upstreamResponse.status !== 204) {
-      // Do not relay error response bodies (may contain internal data).
-      throw new Error(`ALFASTORE HTTP ${upstreamResponse.status} pada ${endpointPath}.`);
-    }
-    if (upstreamResponse.status === 204) return [];
-    return decodeUpstream(raw);
-  } catch (err) {
-    if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error(`ALFASTORE timeout setelah ${UPSTREAM_TIMEOUT_MS / 1000} detik.`);
-    }
-    throw err;
-  } finally {
-    clearTimeout(timer);
-  }
+    const raw = await res.text();
+    if (res.status === 204) return [];
+    if (!res.ok) throw new Error(`ALFASTORE HTTP ${res.status} pada ${path}.`);
+    return parseUpstream(raw);
+  } catch(e) {
+    if (e instanceof Error && e.name === 'AbortError') throw new Error(`ALFASTORE timeout ${TIMEOUT/1000} detik pada ${path}.`);
+    throw e;
+  } finally { clearTimeout(timeout); }
 }
-
-function asArray(data: unknown): PlainObject[] {
-  if (Array.isArray(data)) return data.filter(isObject);
-  if (isObject(data)) {
-    for (const key of ['data', 'items', 'result', 'rows']) {
-      if (Array.isArray(data[key])) return (data[key] as unknown[]).filter(isObject);
+// Normalisasi respons berlapis: data, result, rows, list, items, payload dll.
+// Tidak melakukan iterasi acak: hanya ambil baris objek dengan batas jumlah.
+function collectRows(value: unknown): Obj[] {
+  const result: Obj[] = [];
+  const seen = new Set<unknown>();
+  function walk(v: unknown, depth: number): void {
+    if (depth > 6 || result.length >= MAX_ROWS || v == null || typeof v !== 'object' || seen.has(v)) return;
+    seen.add(v);
+    if (Array.isArray(v)) { for (const x of v) walk(x,depth+1); return; }
+    if (!obj(v)) return;
+    const keys = Object.keys(v);
+    if (keys.some(k => ['plu','PLU','bill_no','billNo','noBon','nomor_bon','jumlahBon','totalBon','billCount','qty'].includes(k))) result.push(v);
+    for (const key of ['data','rows','items','result','results','list','payload','records','report','dataList','details','transaksi','content']) {
+      if (key in v) walk(v[key],depth+1);
     }
   }
-  throw new Error('Format daftar transaksi tidak sesuai (bukan array).');
+  walk(value,0);
+  return result;
 }
-
-function itemFromRow(row: PlainObject): Item | null {
-  const rawPlu = row.plu;
-  if (rawPlu == null || String(rawPlu).trim() === '') return null;
-  const qtyRaw = row.qty ?? 0;
-  const qty = typeof qtyRaw === 'number' ? qtyRaw : Number(String(qtyRaw).replace(',', '.'));
-  if (!Number.isFinite(qty)) return null;
-  const plu = String(rawPlu).trim();
+function qtyNumber(value: unknown): number {
+  if (typeof value==='number') return value;
+  const s = text(value).replace(',', '.');
+  return s ? Number(s) : NaN;
+}
+function itemFromRow(row: Obj): Item | null {
+  const plu = text(pick(row,['plu','PLU','pluCode','productCode','product_code']));
+  const qty = qtyNumber(pick(row,['qty','QTY','quantity','qtyPcs','qty_pcs','qtyJual','totalQty']));
+  if (!plu || !Number.isFinite(qty)) return null;
   return {
-    plu,
-    barcode: String(row.barcode ?? '').trim(),
-    name: String(row.desc ?? row.descp ?? row.name ?? '').trim() || `Item ${plu}`,
+    plu, barcode:text(pick(row,['barcode','Barcode','barcodeItem','ean'])),
+    name:text(pick(row,['desc','descp','name','description','namaBarang','nama_barang','productName'])) || `Item ${plu}`,
     qty,
   };
 }
-
-function aggregateRows(rows: PlainObject[], items: Map<string, Item>): void {
-  for (const row of rows) {
-    const item = itemFromRow(row);
-    if (!item) continue;
-    const old = items.get(item.plu);
-    if (!old) { items.set(item.plu, item); continue; }
-    old.qty += item.qty;
-    if ((!old.name || old.name.startsWith('Item ')) && !item.name.startsWith('Item ')) old.name = item.name;
-    if (!old.barcode && item.barcode) old.barcode = item.barcode;
-  }
+function rowCashier(row: Obj): string {
+  return text(pick(row,['userId','user_id','nik','nikKasir','nik_kasir','cashierId','kasirNik','rowUserId']));
 }
-
-async function parallelMap<T>(tasks: T[], workers: number, fn: (task: T) => Promise<void>): Promise<void> {
-  let next = 0;
-  await Promise.all(Array.from({ length: Math.min(workers, tasks.length) }, async () => {
-    while (next < tasks.length) {
-      const index = next++;
-      await fn(tasks[index]);
+function aggregate(rows: Item[]): Item[] {
+  const map = new Map<string,Item>();
+  for (const x of rows) {
+    const old = map.get(x.plu);
+    if (!old) {map.set(x.plu,{...x});continue;}
+    old.qty += x.qty;
+    if (old.name.startsWith('Item ') && !x.name.startsWith('Item ')) old.name = x.name;
+    if (!old.barcode) old.barcode = x.barcode;
+  }
+  return [...map.values()].sort((a,b)=>a.plu.localeCompare(b.plu,'id',{numeric:true}));
+}
+function numBon(v: unknown): number | null {
+  const t=text(v);
+  if (!/^\d{1,6}$/.test(t)) return null;
+  const n=Number(t);
+  return n>=1 && n<=MAX_BON ? n : null;
+}
+function analyzeReport(value: unknown, input: ReqInput): {items:Item[],bonNos:number[],bonCount:number|null, matchedRows:number, rowCount:number} {
+  const rows=collectRows(value);
+  const items:Item[]=[]; const bonNos=new Set<number>();
+  let count:number|null=null, matchedRows=0;
+  for (const row of rows) {
+    const nik=rowCashier(row);
+    if (nik && nik!==input.nik) continue;
+    matchedRows++;
+    const itm=itemFromRow(row);
+    if (itm) items.push(itm);
+    const bon=numBon(pick(row,['bill_no','billNo','noBon','no_bon','nomor_bon','billNumber']));
+    if (bon) bonNos.add(bon);
+    const n=numBon(pick(row,['jumlahBon','jumlah_bon','totalBon','total_bon','billCount','totalBills']));
+    if (n && (count===null || n>count)) count=n;
+  }
+  // Support obj containing total summary field with no row list.
+  if (obj(value)) {
+    const n=numBon(pick(value,['jumlahBon','jumlah_bon','totalBon','total_bon','billCount','totalBills']));
+    if (n && (count===null || n>count)) count=n;
+  }
+  return {items:aggregate(items),bonNos:[...bonNos].sort((a,b)=>a-b),bonCount:count,matchedRows,rowCount:rows.length};
+}
+async function discover(input: ReqInput): Promise<Obj> {
+  const ddmmyyyy=input.dateTx.split('-').reverse().join('-');
+  const diagnostics:SourceDiagnostic[]=[];
+  const endpoints=[
+    `rpt/laporan/laporan_penjualan_per_nomor_bon?${new URLSearchParams({storeId:input.storeId,userId:input.nik,periode1:ddmmyyyy,dateTx:input.dateTx})}`,
+    `rpt/laporan/penjualan_per_kasir?${new URLSearchParams({storeId:input.storeId,userId:input.nik,periode1:ddmmyyyy})}`,
+  ];
+  for (const endpoint of endpoints) {
+    const source=endpoint.split('?')[0];
+    try {
+      const value=await requestUpstream(input,endpoint,'GET');
+      const found=analyzeReport(value,input);
+      if (found.items.length>0) {
+        return {success:true, mode:'items', source, items:found.items, billNumbers:[],
+          completeness:'unverified', message:'Barang tersedia dari API laporan. Pastikan parameter NIK diterapkan server laporan.', diagnostics};
+      }
+      if (found.bonNos.length>0) {
+        return {success:true, mode:'bills', source, billNumbers:found.bonNos, items:[],
+          completeness:'unverified', message:`Ditemukan ${found.bonNos.length} nomor bon dari laporan. Detail akan diambil otomatis.`, diagnostics};
+      }
+      if (found.bonCount !== null) {
+        const ids=Array.from({length:found.bonCount},(_,i)=>i+1);
+        return {success:true,mode:'bills',source,billNumbers:ids,items:[],completeness:'unverified',
+          message:`Laporan memberikan jumlah bon ${found.bonCount}, bukan daftar bon. Sistem memeriksa 1–${found.bonCount}; kelengkapan belum dapat dipastikan.`, diagnostics};
+      }
+      diagnostics.push({source,status:`JSON diterima, tetapi tidak ada PLU/Qty, nomor bon, atau total bon yang dapat diidentifikasi (${found.rowCount} baris).`});
+    } catch(e) {
+      diagnostics.push({source,status:e instanceof Error?e.message:'Gagal membaca laporan'});
+    }
+  }
+  return {success:false,code:'BON_DISCOVERY_UNAVAILABLE',mode:'none', items:[],billNumbers:[],
+    message:'Belum bisa mendapatkan SEMUA barang otomatis. Kedua API laporan tidak menyediakan daftar bon/PLU yang terbaca. APK THOR sendiri memerlukan bill_no sebelum mengambil item. Sistem tidak akan menampilkan 0 sebagai hasil penjualan lengkap.',diagnostics};
+}
+async function detail(input: ReqInput, body: Obj): Promise<Obj> {
+  if (!Array.isArray(body.billNumbers)) throw new Error('Daftar nomor bon otomatis tidak tersedia.');
+  const nums=body.billNumbers.map(numBon);
+  if (!nums.length || nums.length>MAX_BATCH || nums.some(n=>n===null)) throw new Error(`Nomor bon otomatis harus 1–${MAX_BON}, maksimum ${MAX_BATCH} per batch.`);
+  const bills=[...new Set(nums)] as number[];
+  const items:Item[]=[]; const failures:{billNo:number,message:string}[]=[];
+  let nonEmptyBills=0,successfulBills=0;
+  let next=0;
+  await Promise.all(Array.from({length:Math.min(6,bills.length)},async()=>{
+    while(next<bills.length){
+      const billNo=bills[next++];
+      try {
+        const value=await requestUpstream(input,'pos/transaksi/retur/get_transaction','POST',{
+          storeId:input.storeId, dateTx:input.dateTx, userId:input.nik, billNo,
+        });
+        const rows=collectRows(value);
+        const obtained=rows.map(itemFromRow).filter((r):r is Item=>r!==null);
+        if (obtained.length) nonEmptyBills++;
+        items.push(...obtained);
+        successfulBills++;
+      } catch(e){ failures.push({billNo,message:e instanceof Error?e.message:'Gagal mengambil bon'}); }
     }
   }));
+  return {success:true,mode:'detail',checkedBills:bills.length,nonEmptyBills,successfulBills,
+    failedBills:failures.sort((a,b)=>a.billNo-b.billNo),items:aggregate(items)};
 }
-
-async function detail(input: Input, body: PlainObject): Promise<PlainObject> {
-  const start = Number(body.startBillNo);
-  const end = Number(body.endBillNo);
-  if (!Number.isInteger(start) || !Number.isInteger(end) || start < 1 || end < start || end > MAX_BILL_NO || end - start + 1 > BATCH_SIZE) {
-    throw new Error(`Rentang billNo harus 1–${MAX_BILL_NO} dan maksimum ${BATCH_SIZE} bon per permintaan.`);
+async function lookup(input:ReqInput,body:Obj):Promise<Obj>{
+  if (!Array.isArray(body.plus)) throw new Error('PLU wajib berupa array.');
+  const plus=[...new Set(body.plus.map(text))];
+  if (!plus.length || plus.length>8 || plus.some(p=>!/^[\w-]{1,20}$/.test(p))) throw new Error('Isi 1–8 PLU valid.');
+  const results:{plu:string,name:string,barcode:string}[]=[]; const warnings:string[]=[];
+  for(const plu of plus){
+    try{
+      const q=new URLSearchParams({storeId:input.storeId,searchValue:plu});
+      const rows=collectRows(await requestUpstream(input,`sis/master/inventory/lov_items?${q}`,'GET'));
+      const row=rows.find(r=>text(r.plu)===plu);
+      if(row) results.push({plu,name:text(pick(row,['descp','desc','name'])),barcode:text(row.barcode)});
+    } catch {warnings.push(`PLU ${plu} gagal dilengkapi`);}
   }
-  const items = new Map<string, Item>();
-  const failedBills: { billNo: number; message: string }[] = [];
-  let successfulBills = 0;
-  let nonEmptyBills = 0;
-  const bills = Array.from({ length: end - start + 1 }, (_, i) => start + i);
-  await parallelMap(bills, PARALLEL_FETCHES, async (billNo) => {
-    try {
-      const result = await upstream(input, 'pos/transaksi/retur/get_transaction', 'POST', {
-        storeId: input.storeId,
-        dateTx: input.dateTx,
-        userId: input.nik,
-        billNo,
-      });
-      const rows = asArray(result);
-      successfulBills++;
-      if (rows.length) nonEmptyBills++;
-      aggregateRows(rows, items);
-    } catch (err) {
-      failedBills.push({ billNo, message: err instanceof Error ? err.message : 'Request gagal.' });
+  return {success:true,results,warnings};
+}
+export async function OPTIONS(req:Request):Promise<Response>{
+  const origin=req.headers.get('origin');
+  return originAllowed(origin)?reply({success:true},200,origin):fail('Origin tidak diizinkan',403);
+}
+export async function GET(req:Request):Promise<Response>{
+  const origin=req.headers.get('origin');
+  if(!originAllowed(origin))return fail('Origin tidak diizinkan',403);
+  return reply({success:true, service:'THOR Penjualan per NIK', version:'auto-discovery-v2',method:'POST',
+    actions:['discover','detail','lookup'], note:'Tanpa login dan tanpa input bon awal/akhir. Kelengkapan tergantung laporan upstream.'},200,origin);
+}
+export async function POST(req:Request):Promise<Response>{
+  const origin=req.headers.get('origin');
+  if(!originAllowed(origin)) return fail('Origin tidak diizinkan',403);
+  try{
+    const bodyStr=await req.text();
+    if(bodyStr.length>4000)return fail('Payload terlalu besar.',413,origin);
+    let body:unknown;
+    try{body=JSON.parse(bodyStr)}catch{return fail('Body JSON tidak valid.',400,origin)}
+    if(!obj(body))return fail('Body JSON harus objek.',400,origin);
+    const input=inputOf(body);
+    let value:Obj;
+    switch(body.action){
+      case 'discover':value=await discover(input);break;
+      case 'detail':value=await detail(input,body);break;
+      case 'lookup':value=await lookup(input,body);break;
+      default:return fail('Action harus discover, detail, atau lookup.',400,origin);
     }
-  });
-  return {
-    success: true,
-    startBillNo: start,
-    endBillNo: end,
-    checkedBills: bills.length,
-    successfulBills,
-    nonEmptyBills,
-    failedBills: failedBills.sort((a, b) => a.billNo - b.billNo),
-    items: [...items.values()].sort((a, b) => a.plu.localeCompare(b.plu, 'id')),
-  };
-}
-
-async function lookup(input: Input, body: PlainObject): Promise<PlainObject> {
-  if (!Array.isArray(body.plus)) throw new Error('Kirim daftar PLU pada field plus.');
-  const plus = [...new Set(body.plus.map(String).map(s => s.trim()))];
-  if (plus.length < 1 || plus.length > 8 || plus.some(plu => !/^[A-Za-z0-9]{1,20}$/.test(plu))) {
-    throw new Error('Isi 1–8 PLU (maksimum 20 karakter).');
-  }
-  const results: { plu: string; name: string; barcode: string }[] = [];
-  const warnings: string[] = [];
-  await parallelMap(plus, 4, async (plu) => {
-    try {
-      const q = new URLSearchParams({ storeId: input.storeId, searchValue: plu });
-      const arr = asArray(await upstream(input, `sis/master/inventory/lov_items?${q}`, 'GET'));
-      const row = arr.find(r => String(r.plu ?? '') === plu);
-      if (row) results.push({ plu, name: String(row.descp ?? row.desc ?? '').trim(), barcode: String(row.barcode ?? '').trim() });
-    } catch (_err) {
-      warnings.push(`PLU ${plu} gagal dilengkapi.`);
-    }
-  });
-  return { success: true, results, warnings };
-}
-
-export async function OPTIONS(request: Request): Promise<Response> {
-  const origin = request.headers.get('origin');
-  if (!allowedOrigin(origin)) return errorResponse('Origin tidak diizinkan.', 403);
-  return response({ success: true }, 200, origin);
-}
-
-export async function GET(request: Request): Promise<Response> {
-  const origin = request.headers.get('origin');
-  if (!allowedOrigin(origin)) return errorResponse('Origin tidak diizinkan.', 403);
-  return response({
-    success: true,
-    service: 'THOR Penjualan per NIK',
-    method: 'POST',
-    actions: ['detail', 'lookup'],
-    note: 'API detail transaksi aktif. Kirim storeId, nik, dateTx, dan rentang startBillNo/endBillNo untuk action detail.',
-  }, 200, origin);
-}
-
-export async function POST(request: Request): Promise<Response> {
-  const origin = request.headers.get('origin');
-  if (!allowedOrigin(origin)) return errorResponse('Origin tidak diizinkan.', 403);
-  try {
-    const raw = await request.text();
-    if (raw.length > 3000) return errorResponse('Ukuran request terlalu besar.', 413, origin);
-    let value: unknown;
-    try { value = JSON.parse(raw); }
-    catch { return errorResponse('Body harus JSON yang valid.', 400, origin); }
-    if (!isObject(value)) return errorResponse('Body harus objek JSON.', 400, origin);
-    const input = parseInput(value);
-    let result: PlainObject;
-    switch (value.action) {
-      case 'detail': result = await detail(input, value); break;
-      case 'lookup': result = await lookup(input, value); break;
-      default: return errorResponse('Action harus detail atau lookup.', 400, origin);
-    }
-    return response(result, 200, origin);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Kesalahan server tidak diketahui.';
-    const badInput = /^(Kode toko|NIK|Tanggal|Branch ID|Rentang billNo|Kirim daftar|Isi 1–8)/.test(msg);
-    return errorResponse(msg, badInput ? 400 : 502, origin);
+    if(value.success===false)return reply(value,422,origin);
+    return reply(value,200,origin);
+  }catch(e){const message=e instanceof Error?e.message:'Gagal memproses request.';
+    const status=/^(Kode toko|NIK|Tanggal|Branch ID|Daftar nomor|Nomor bon|PLU|Isi )/.test(message)?400:502;
+    return fail(message,status,origin);
   }
 }

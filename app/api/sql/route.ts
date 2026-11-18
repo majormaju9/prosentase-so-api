@@ -4,7 +4,7 @@
  * Public URL: https://majormaju9-prosentase-so-api.vercel.app/api/sql
  *
  * Headers stay on this server only. DO NOT paste Api-Key into index.html.
- * Note: Keeping a key directly in source code is insecure if the repository is shared.
+ * Note: This route contains a server-side key, so use a private repository and server-side rate limiting.
  * Rotate the key if this source has ever been published.
  */
 export const runtime = 'nodejs';
@@ -24,8 +24,7 @@ const AUTH = {
   defaultBranchId: 'MZ01',
 } as const;
 
-const VERSION_APP = 'V.2021.1.1'; // Observed in THOR's cek_login request.
-const MAX_BILL_NO = 250; // Limit observed in THOR's Penjualan per NIK flow.
+const MAX_BILL_NO = 250; // Batas pengujian nomor bon manual tanpa mencari jumlah bon melalui login.
 const BATCH_SIZE = 12;
 const PARALLEL_FETCHES = 6;
 const UPSTREAM_TIMEOUT_MS = 9000;
@@ -118,7 +117,7 @@ function decodeUpstream(raw: string): unknown {
 
 async function upstream(input: Input, path: string, method: 'GET'|'POST', data?: unknown): Promise<unknown> {
   // No arbitrary URLs or paths from the browser are allowed here.
-  const allowed = ['so/login/cek_login', 'pos/transaksi/retur/get_transaction', 'sis/master/inventory/lov_items'];
+  const allowed = ['pos/transaksi/retur/get_transaction', 'sis/master/inventory/lov_items'];
   const endpointPath = path.split('?')[0];
   if (!allowed.includes(endpointPath)) throw new Error('Endpoint tidak diizinkan.');
   const controller = new AbortController();
@@ -147,14 +146,6 @@ async function upstream(input: Input, path: string, method: 'GET'|'POST', data?:
   } finally {
     clearTimeout(timer);
   }
-}
-
-function jakartaNow(): string {
-  const fmt = new Intl.DateTimeFormat('sv-SE', {
-    timeZone: 'Asia/Jakarta', year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
-  });
-  return fmt.format(new Date()).replace(' ', ' ');
 }
 
 function asArray(data: unknown): PlainObject[] {
@@ -202,39 +193,6 @@ async function parallelMap<T>(tasks: T[], workers: number, fn: (task: T) => Prom
       await fn(tasks[index]);
     }
   }));
-}
-
-async function summary(input: Input): Promise<PlainObject> {
-  const current = jakartaNow(); // YYYY-MM-DD HH:mm:ss in Indonesian local time.
-  const clientDate = input.dateTx === current.slice(0, 10) ? current : `${input.dateTx} 23:59:59`;
-  const query = new URLSearchParams({
-    storeId: input.storeId,
-    nik: input.nik,
-    clientDate,
-    version_app: VERSION_APP,
-  });
-  const result = await upstream(input, `so/login/cek_login?${query}`, 'GET');
-  if (!isObject(result) || !isObject(result.dataUser)) {
-    throw new Error('Data kasir tidak ditemukan di respons cek_login. Periksa toko, NIK, dan tanggal.');
-  }
-  const dataUser = result.dataUser;
-  const number = Number(dataUser.bill_no);
-  if (!Number.isFinite(number) || number < 0) {
-    throw new Error('Jumlah bon (dataUser.bill_no) tidak valid atau tidak tersedia.');
-  }
-  const totalReportedBills = Math.floor(number);
-  return {
-    success: true,
-    storeId: input.storeId,
-    nik: input.nik,
-    dateTx: input.dateTx,
-    cashierName: String(dataUser.name ?? dataUser.nick_name ?? '-').trim() || '-',
-    reportedBills: totalReportedBills,
-    billCount: Math.min(totalReportedBills, MAX_BILL_NO),
-    capped: totalReportedBills > MAX_BILL_NO,
-    maxBillNo: MAX_BILL_NO,
-    batchSize: BATCH_SIZE,
-  };
 }
 
 async function detail(input: Input, body: PlainObject): Promise<PlainObject> {
@@ -310,8 +268,8 @@ export async function GET(request: Request): Promise<Response> {
     success: true,
     service: 'THOR Penjualan per NIK',
     method: 'POST',
-    actions: ['summary', 'detail', 'lookup'],
-    note: 'API aktif. Kirim kode toko, NIK dan tanggal dari index.html untuk menguji data asli.',
+    actions: ['detail', 'lookup'],
+    note: 'API detail transaksi aktif. Kirim storeId, nik, dateTx, dan rentang startBillNo/endBillNo untuk action detail.',
   }, 200, origin);
 }
 
@@ -328,10 +286,9 @@ export async function POST(request: Request): Promise<Response> {
     const input = parseInput(value);
     let result: PlainObject;
     switch (value.action) {
-      case 'summary': result = await summary(input); break;
       case 'detail': result = await detail(input, value); break;
       case 'lookup': result = await lookup(input, value); break;
-      default: return errorResponse('Action harus summary, detail, atau lookup.', 400, origin);
+      default: return errorResponse('Action harus detail atau lookup.', 400, origin);
     }
     return response(result, 200, origin);
   } catch (err) {

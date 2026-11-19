@@ -27,9 +27,8 @@ export async function GET(request: Request) {
   const code = new URL(request.url).searchParams.get('kode')?.trim() || '';
   if (!/^\d{1,32}$/.test(code)) return reply({ error: 'Masukkan PLU atau barcode berupa angka.' }, 400);
   const storeId = process.env.SIS_STORE_ID || 'M865';
-  const apiKey = process.env.SIS_API_KEY;
-  const userId = process.env.SIS_USER_ID;
-  if (!apiKey || !userId) return reply({ error: 'Isi SIS_API_KEY dan SIS_USER_ID di Vercel.' }, 503);
+  const apiKey = 'iVOZX9MLmKrj1L8R23uF1aryMR1vGMXG';
+  const userId = '20020884';
 
   // Identitas toko dan pengguna berasal dari konfigurasi server.
   const headers = {

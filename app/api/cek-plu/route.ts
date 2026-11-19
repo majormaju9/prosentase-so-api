@@ -41,7 +41,18 @@ export async function GET(request: Request) {
   async function read(path: string, params: Record<string, string>) {
     const url = new URL(path, base);
     url.search = new URLSearchParams(params).toString();
-    const res = await fetch(url, { headers, cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(6000) });
+    const options = { headers, cache: 'no-store', redirect: 'manual', signal: AbortSignal.timeout(10000) } as const;
+    let res = await fetch(url, options);
+    if ([301, 302, 307, 308].includes(res.status)) {
+      const location = res.headers.get('Location');
+      if (location) {
+        const next = new URL(location, url);
+        if (next.origin === url.origin && next.pathname.replace(/\/$/, '') === url.pathname.replace(/\/$/, '')) {
+          if (!next.search) next.search = url.search;
+          res = await fetch(next, options);
+        }
+      }
+    }
     if (!res.ok) throw new Error('Alfastore mengembalikan HTTP ' + res.status + '.');
     try { return await res.json(); }
     catch { throw new Error('Respons Alfastore bukan JSON.'); }
@@ -53,18 +64,32 @@ export async function GET(request: Request) {
     if (!item) return reply({ error: 'Nama barang dengan PLU atau barcode persis ini tidak ditemukan di master barang.' }, 404);
     const plu = field(item,'plu');
     const product = { nama: field(item,'descp','nama_barang','description','nama'), plu, barcode: field(item,'barcode'), storeId };
+    let tahap = 'Pemeriksaan PLU / barcode';
     try {
       const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Jakarta', day:'2-digit', month:'2-digit', year:'numeric' }).format(new Date());
       const params = { storeId, storeDate: parts.replaceAll('/','-'), inputType:'ITEM' };
       const check = await read('laporan/label_price/check_input_filter', { ...params, inputFilter: code });
-      const planos = records(check).find(r => Array.isArray(r.planograms))?.planograms ?? [];
-      const details = await read('laporan/label_price/', { ...params, priceType:'BESAR', inputFilter: JSON.stringify({ plu, planograms: planos }) });
+      const options = records(check).find(r => Array.isArray(r.planograms))?.planograms;
+      // Dialog SISA mengirim nilai kolom planogram dari baris pilihan.
+      const planos = Array.isArray(options) ? [...new Set(options.map((option: unknown) => {
+        if (typeof option === 'string' || typeof option === 'number') return String(option).trim();
+        return option && typeof option === 'object' ? field(option as Row, 'planogram') : '';
+      }).filter(Boolean))] : [];
+      tahap = 'Pengambilan Label Price Besar';
+      const details = await read('laporan/label_price/', { ...params, priceType:'BESAR', inputFilter: JSON.stringify({ plu: code, planograms: planos }) });
       const labels = records(details).filter(r => (plu && field(r,'plu') === plu || field(r,'barcode') === code) && Object.keys(r).some(k => /^(price|harga|planogram|fprice|f_price)$/i.test(k))).map(r => ({
         Planogram: field(r,'planogram'), Subdept: field(r,'subdept'), Harga: field(r,'price','harga'),
         F_Price: field(r,'fPrice','F_Price'), Barcode: field(r,'barcode'), D_B_FP: field(r,'dbfp','D_B_FP'), D_E_FP: field(r,'defp','D_E_FP')
       }));
       return reply({ product, labels, note: labels.length ? '' : 'Detail Label Price belum tersedia.' });
-    } catch { return reply({ product, labels: [], note: 'Nama ditemukan. Detail Label Price belum dapat diambil.' }); }
+    } catch (err) {
+      let cause = 'Koneksi ke server Alfastore gagal.';
+      if (err instanceof Error) {
+        if (/^(Alfastore mengembalikan HTTP \d{3}\.|Respons Alfastore bukan JSON\.)$/.test(err.message)) cause = err.message;
+        if (err.name === 'TimeoutError' || err.name === 'AbortError') cause = 'Alfastore belum merespons dalam 10 detik.';
+      }
+      return reply({ product, labels: [], note: tahap + ' gagal. ' + cause });
+    }
   } catch (err) {
     const message = err instanceof Error && err.message.startsWith('Alfastore mengembalikan HTTP') ? err.message :
       err instanceof Error && err.message === 'Respons Alfastore bukan JSON.' ? err.message : 'Koneksi ke Alfastore gagal atau melewati batas waktu.';

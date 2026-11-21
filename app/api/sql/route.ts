@@ -10,12 +10,12 @@
  *             POST pos/transaksi/retur/get_transaction -> detail penjualan
  *             GET  sis/master/inventory/lov_items     -> nama/barcode barang
  *
- * 404 dari cek_login TIDAK menggagalkan pencarian: pemindaian per halaman
- * otomatis tetap dapat berjalan. 404 dari get_transaction yang menunjukkan
- * route hilang tetap dilaporkan secara jujur, bukan dianggap barang kosong.
+ * Coba rute laporan per NIK lebih dahulu (alternatif belum terverifikasi di APK).
+ * Jika cek_login 404 dan laporan tidak menyediakan data item, hentikan proses
+ * dengan diagnostik jelas. Jangan menganggap 150 bon kosong = penjualan 0.
  */
 
-const BUILD_VERSION = 'sql-semua-v3.1';
+const BUILD_VERSION = 'sql-diagnostik-v4.0';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -26,6 +26,7 @@ const HEADER_USER_ID = process.env.SIS_HEADER_USER_ID || '20020884';
 const BRANCH_ID = process.env.SIS_BRANCH_ID || 'MZ01';
 const APP_NAME = process.env.SIS_APP_NAME || 'InventoryIntelligence';
 const PAGE_SIZE = 30;
+const REPORT_ROUTE = (process.env.SIS_PENJUALAN_NIK_REPORT_ROUTE || 'rpt/laporan/penjualan_per_nik').replace(/^\/+/, '');
 const CONCURRENCY = 10;
 const MAX_AUTOSCAN_BON = 20000; // pengaman beban server, bukan kontrol pengguna
 
@@ -147,17 +148,22 @@ function loginUser(data: unknown): Dict | null {
 }
 function findRows(data: unknown, level = 0): Dict[] {
   if (level > 9 || data == null) return [];
+  if (typeof data === 'string') {
+    const text = data.startsWith('200^') ? data.slice(4).trim() : data.trim();
+    if (!text.startsWith('[') && !text.startsWith('{')) return [];
+    try { return findRows(JSON.parse(text), level + 1); } catch { return []; }
+  }
   if (Array.isArray(data)) return data.flatMap(x => findRows(x, level + 1));
   const root = object(data);
   if (!root) return [];
-  const plu = field(root, ['plu', 'PLU', 'prdcd', 'kode_barang', 'item_code']);
-  if (plu && (root.qty !== undefined || root.quantity !== undefined || root.jumlah !== undefined || root.s_qty !== undefined)) return [root];
-  return ['data', 'items', 'item', 'detail', 'details', 'list', 'rows', 'result', 'transactions', 'dataItem', 'dataDetail', 'data_table']
+  const plu = field(root, ['plu', 'PLU', 'prdcd', 'kode_barang', 'item_code', 'kode_plu']);
+  if (plu && (root.qty !== undefined || root.quantity !== undefined || root.jumlah !== undefined || root.s_qty !== undefined || root.qty_jual !== undefined || root.total_qty !== undefined || root.qtySales !== undefined)) return [root];
+  return ['data', 'items', 'item', 'detail', 'details', 'list', 'rows', 'result', 'transactions', 'dataItem', 'dataDetail', 'data_table', 'content', 'hasil', 'listData', 'records']
     .flatMap(k => findRows(root[k], level + 1));
 }
 function itemFromRow(row: Dict): Item | null {
-  const plu = field(row, ['plu', 'PLU', 'prdcd', 'kode_barang', 'item_code']);
-  const qty = num(row.qty ?? row.quantity ?? row.jumlah ?? row.s_qty);
+  const plu = field(row, ['plu', 'PLU', 'prdcd', 'kode_barang', 'item_code', 'kode_plu']);
+  const qty = num(row.qty ?? row.quantity ?? row.jumlah ?? row.s_qty ?? row.qty_jual ?? row.total_qty ?? row.qtySales);
   if (!plu || !qty) return null;
   return {
     plu,
@@ -182,6 +188,29 @@ function lovRows(data: unknown, level = 0): Dict[] {
   return ['data', 'items', 'item', 'result', 'list', 'rows'].flatMap(k => lovRows(o[k], level + 1));
 }
 async function init(data: UserInput): Promise<Response> {
+  // Report per NIK adalah kandidat dari integrasi sebelumnya, bukan jalur
+  // penjualan item yang terkonfirmasi dari APK THOR. Hanya gunakan jika
+  // respons benar-benar berisi pasangan PLU + qty.
+  const reportQuery = new URLSearchParams({ storeId: data.storeId, nik: data.nik, dateTx: data.tanggal });
+  const report = await api(`${REPORT_ROUTE}?${reportQuery}`, data.storeId, 'GET');
+  const matchedRows = report.ok ? findRows(report.data) : [];
+  const fromReport = new Map<string, Item>();
+  for (const row of matchedRows) {
+    const item = itemFromRow(row);
+    if (item) addItem(fromReport, item);
+  }
+  const statusReport = { status: report.status, isJson: report.isJson,
+    itemRows: matchedRows.length, validItems: fromReport.size, message: report.message.slice(0, 145) };
+  if (fromReport.size > 0) {
+    return respond({ success: true, action: 'init', source: 'report-per-nik',
+      namaKasir: `NIK ${data.nik}`, items: [...fromReport.values()], maxBill: null,
+      report: statusReport,
+      warnings: ['Item dibaca dari endpoint laporan per NIK alternatif. Karena metadata pagination belum terverifikasi, kelengkapan seluruh transaksi belum dapat dijamin.'],
+      pageSize: PAGE_SIZE, maxAutoScan: MAX_AUTOSCAN_BON });
+  }
+
+  // Jalur yang teridentifikasi di APK: cek_login memberikan bill_no,
+  // get_transaction membutuhkan billNo. Tanpa bill_no jangan tebak 1..150.
   const now = nowJakarta();
   const clientDate = data.tanggal === now.date ? `${now.date} ${now.time}` : `${data.tanggal} 23:59:59`;
   const query = new URLSearchParams({ storeId: data.storeId, nik: data.nik, clientDate, version_app: 'V.2021.1.1' });
@@ -190,20 +219,29 @@ async function init(data: UserInput): Promise<Response> {
   let maxBill: number | null = null;
   if (user && 'bill_no' in user) {
     const n = num(user.bill_no);
-    if (n >= 0 && Number.isInteger(n)) maxBill = n;
+    if (n >= 0 && Number.isSafeInteger(n)) maxBill = n;
   }
-  const namaKasir = user ? field(user, ['name', 'nick_name', 'nama']) : '';
-  const warnings: string[] = [];
-  if (!login.ok) {
-    if (login.status === 404) warnings.push('Endpoint cek_login merespons HTTP 404. Pencarian detail tetap dilanjutkan otomatis tanpa bergantung pada endpoint tersebut.');
-    else warnings.push(`Pemeriksaan identitas NIK tidak tersedia (${login.message}). Detail penjualan tetap dicoba.`);
-  } else if (maxBill === null) {
-    warnings.push('Server tidak mengirim bill_no. Batas akhir bon tidak diketahui; pencarian menggunakan deteksi jeda transaksi dan hasilnya mungkin belum lengkap.');
+  const loginInfo = { status: login.status, isJson: login.isJson, billNoDitemukan: maxBill !== null,
+    message: login.message.slice(0, 145) };
+
+  if (maxBill === null) {
+    const detail = `laporan per NIK: HTTP ${report.status || 'koneksi'}; cek_login: HTTP ${login.status || 'koneksi'}`;
+    return respond({ success: false, tahap: 'sumber_transaksi',
+      message: 'Belum dapat menampilkan penjualan karena batas nomor bon tidak tersedia dari cek_login dan laporan per NIK tidak mengembalikan detail PLU + qty. Tidak dilakukan pemindaian asal dari nomor 1. Periksa ketersediaan route server atau hak akses API. (' + detail + ')',
+      report: statusReport, cekLogin: loginInfo,
+      petunjuk: 'Jika aplikasi resmi menampilkan transaksi, cek API base aktif dan izin akses. Kirim informasi HTTP status dari kedua endpoint untuk diagnosis lanjut, tanpa membagikan Api-Key.'
+    }, 502);
   }
-  return respond({ success: true, action: 'init',
-    namaKasir: namaKasir || `NIK ${data.nik}`, maxBill, pageSize: PAGE_SIZE,
-    maxAutoScan: MAX_AUTOSCAN_BON, warnings,
-    metode: maxBill === null ? 'otomatis-heuristik' : 'otomatis-sampai-bill_no',
+  if (maxBill > MAX_AUTOSCAN_BON) {
+    return respond({ success: false, tahap: 'batas_bon', message:
+      `Server memberikan bill_no ${maxBill}, melebihi batas aman ${MAX_AUTOSCAN_BON}. Kelengkapan belum bisa dijamin dan pemindaian masif tidak dijalankan.`,
+      report: statusReport, cekLogin: loginInfo }, 422);
+  }
+  return respond({ success: true, action: 'init', source: 'scan-bill_no',
+    namaKasir: user ? field(user, ['name', 'nick_name', 'nama']) || `NIK ${data.nik}` : `NIK ${data.nik}`,
+    maxBill, pageSize: PAGE_SIZE, maxAutoScan: MAX_AUTOSCAN_BON,
+    report: statusReport, cekLogin: loginInfo,
+    warnings: report.status === 404 ? ['Endpoint laporan alternatif tidak tersedia (HTTP 404); menggunakan alur cek_login + detail transaksi APK.'] : [],
   });
 }
 async function scan(data: UserInput, req: Dict): Promise<Response> {
@@ -280,7 +318,7 @@ async function enrich(data: UserInput, req: Dict): Promise<Response> {
 }
 
 export async function GET(): Promise<Response> {
-  return respond({ success: true, message: 'Endpoint /api/sql aktif. Untuk mencari seluruh penjualan NIK gunakan POST dari index.php yang seversi.', metode: 'pemindaian otomatis bertahap', actions: ['init', 'scan', 'enrich'] });
+  return respond({ success: true, message: 'Endpoint /api/sql aktif. Pencarian dilakukan oleh index.php; cek status alur via hasil POST init.', metode: 'laporan alternatif, lalu cek_login + pemindaian jika bill_no tersedia', actions: ['init', 'scan', 'enrich'] });
 }
 export async function POST(req: Request): Promise<Response> {
   let post: Dict | null = null;
@@ -292,6 +330,6 @@ export async function POST(req: Request): Promise<Response> {
     case 'init': return init(parsed);
     case 'scan': return scan(parsed, post);
     case 'enrich': return enrich(parsed, post);
-    default: return respond({ success: false, message: 'Action tidak dikenali. Upload route.ts dan index.php dari ZIP versi sql-semua-v3.1 secara bersamaan.' }, 400);
+    default: return respond({ success: false, message: 'Action tidak dikenali. Upload route.ts dan index.php dari ZIP versi sql-diagnostik-v4.0 secara bersamaan.' }, 400);
   }
 }

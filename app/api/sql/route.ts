@@ -1,296 +1,296 @@
 /**
- * Penjualan per NIK (THOR v15.1.1-compatible flow)
- * Deploy to Next.js/Vercel: app/api/sql/route.ts
- * Endpoint: https://majormaju9-prosentase-so-api.vercel.app/api/sql
+ * PASPRO / Penjualan per NIK — API proxy untuk Next.js App Router (Vercel).
+ * Install: app/api/sql/route.ts  -> POST /api/sql
  *
- * Semua header ke API upstream berada di SERVER, tidak dikirim ke index.php.
- * PENTING: Jangan publikasikan source ini karena memuat API key.
+ * Header autentikasi hanya dikirim dari server. Jangan unggah file sumber ini
+ * ke repositori publik jika memakai API key fallback di bawah.
+ *
+ * Pemanggilan mengikuti endpoint THOR v15.1.1:
+ *  (opsional) GET  so/login/cek_login  -> mengetahui bill_no tertinggi
+ *             POST pos/transaksi/retur/get_transaction -> detail penjualan
+ *             GET  sis/master/inventory/lov_items     -> nama/barcode barang
+ *
+ * 404 dari cek_login TIDAK menggagalkan pencarian: pemindaian per halaman
+ * otomatis tetap dapat berjalan. 404 dari get_transaction yang menunjukkan
+ * route hilang tetap dilaporkan secara jujur, bukan dianggap barang kosong.
  */
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-const API_BASE = 'https://app.alfastore.co.id/prd/api/';
-
-// Header dari tangkapan layar. Server-side ONLY (tidak di browser).
-// Disarankan set SIS_API_KEY di Vercel Environment Variables bila source berada di Git publik.
-const PRIVATE_API_KEY = process.env.SIS_API_KEY || 'iVOZX9MLmKrj1L8R23uF1aryMR1vGMXG';
+const BASE = (process.env.SIS_API_BASE || 'https://app.alfastore.co.id/prd/api/').replace(/\/*$/, '/');
+const API_KEY = process.env.SIS_API_KEY || 'iVOZX9MLmKrj1L8R23uF1aryMR1vGMXG';
 const HEADER_USER_ID = process.env.SIS_HEADER_USER_ID || '20020884';
 const BRANCH_ID = process.env.SIS_BRANCH_ID || 'MZ01';
-const APP_NAME = 'InventoryIntelligence';
-const MAX_BILLS_PER_CALL = 450;
-const MAX_CONCURRENT = 12;
+const APP_NAME = process.env.SIS_APP_NAME || 'InventoryIntelligence';
+const PAGE_SIZE = 30;
+const CONCURRENCY = 10;
+const MAX_AUTOSCAN_BON = 20000; // pengaman beban server, bukan kontrol pengguna
 
-type JsonMap = Record<string, unknown>;
-type ApiReply = { ok: boolean; status: number; data: unknown; error: string };
+export type Dict = Record<string, unknown>;
 type Item = { plu: string; nama: string; barcode: string; qty: number };
-type Inputs = { storeId: string; nik: string; tanggal: string; mulaiBon: number; batasBon: number };
+type ApiReply = { ok: boolean; status: number; data: unknown; isJson: boolean; message: string };
+type UserInput = { storeId: string; nik: string; tanggal: string };
 
-const HTTP_HEADERS = {
-  'Content-Type': 'application/json',
-  Accept: 'application/json',
-  'Cache-Control': 'no-store',
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
+const OUT_HEADERS = {
+  'Content-Type': 'application/json; charset=utf-8',
+  'Cache-Control': 'no-store, max-age=0',
+  'X-Content-Type-Options': 'nosniff',
 };
-
-function jsonResult(data: JsonMap, status = 200): Response {
-  return new Response(JSON.stringify(data), { status, headers: HTTP_HEADERS });
+function respond(body: Dict, status = 200) {
+  return new Response(JSON.stringify(body), { status, headers: OUT_HEADERS });
 }
-
-function asObject(value: unknown): JsonMap | null {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as JsonMap) : null;
+function object(v: unknown): Dict | null {
+  return v && typeof v === 'object' && !Array.isArray(v) ? v as Dict : null;
 }
-
-function asText(value: unknown): string {
-  return value === null || value === undefined ? '' : String(value).trim();
+function str(v: unknown) {
+  return v === undefined || v === null ? '' : String(v).trim();
 }
-
-function stringField(row: JsonMap, names: string[]): string {
+function field(row: Dict, names: string[]): string {
   for (const key of names) {
-    const s = asText(row[key]);
-    if (s && s !== 'null' && s !== 'undefined') return s;
+    const v = str(row[key]);
+    if (v && v !== 'null' && v !== 'undefined') return v;
   }
   return '';
 }
-
-function numberValue(value: unknown): number {
-  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
-  const s = asText(value);
-  if (!s) return 0;
-  const n = Number(s.replace(/,/g, '.'));
+function num(v: unknown) {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
+  const n = Number(str(v).replace(/,/g, '.'));
   return Number.isFinite(n) ? n : 0;
 }
-
-function requestHeaders(storeId: string): Record<string, string> {
+function upstreamHeaders(storeId: string): Record<string, string> {
   return {
     'Content-Type': 'application/json',
-    Accept: 'application/json',
+    'Accept': 'application/json',
     'User-Agent': 'python-requests/2.28.2',
-    'Api-Key': PRIVATE_API_KEY,
+    'Api-Key': API_KEY,
     'App-Name': APP_NAME,
-    Platform: 'ANDROID',
+    'Platform': 'ANDROID',
     'Store-Id': storeId,
     'User-Id': HEADER_USER_ID,
     'Branch-Id': BRANCH_ID,
-    Host: 'app.alfastore.co.id',
-    Connection: 'Keep-Alive',
+    'Connection': 'Keep-Alive',
     'Accept-Encoding': 'gzip',
   };
 }
-
-async function fetchApi(path: string, storeId: string, method: 'GET' | 'POST', body?: JsonMap): Promise<ApiReply> {
+function upstreamUrl(path: string): URL {
+  // path relatif, tidak pernah menerima URL penuh dari pengguna.
+  return new URL(path.replace(/^\/+/, ''), BASE);
+}
+async function api(path: string, storeId: string, method: 'GET' | 'POST', body?: Dict): Promise<ApiReply> {
   try {
-    const res = await fetch(new URL(path, API_BASE), {
+    const res = await fetch(upstreamUrl(path), {
       method,
-      headers: requestHeaders(storeId),
+      headers: upstreamHeaders(storeId),
       ...(method === 'POST' ? { body: JSON.stringify(body || {}) } : {}),
       cache: 'no-store',
-      signal: AbortSignal.timeout(9000),
+      signal: AbortSignal.timeout(7500),
     });
-    const txt = await res.text();
+    if (res.status === 204) return { ok: true, status: 204, data: [], isJson: true, message: '' };
+    const raw = await res.text();
+    const clean = /^\d{3}\^/.test(raw) ? raw.slice(4) : raw;
     let data: unknown = null;
-    if (txt) {
-      // Beberapa wrapper aplikasi THOR menggunakan prefix "200^"; HTTP biasanya JSON murni.
-      const cleaned = /^\d{3}\^/.test(txt) ? txt.slice(4) : txt;
-      try { data = JSON.parse(cleaned); }
-      catch { return { ok: false, status: res.status, data: null, error: `Respons bukan JSON (HTTP ${res.status})` }; }
+    let isJson = false;
+    if (clean.trim()) {
+      try { data = JSON.parse(clean); isJson = true; } catch { /* HTML / WAF / not found */ }
     }
-    return { ok: res.ok, status: res.status, data, error: res.ok ? '' : `HTTP ${res.status}` };
-  } catch (e) {
-    const error = e instanceof Error && e.name === 'TimeoutError' ? 'Timeout server upstream' : 'Tidak dapat terhubung ke server upstream';
-    return { ok: false, status: 0, data: null, error };
+    const root = object(data);
+    const serverMessage = root ? field(root, ['message', 'msg', 'error', 'description']) : '';
+    return {
+      ok: res.ok && isJson,
+      status: res.status,
+      data,
+      isJson,
+      message: !res.ok ? `HTTP ${res.status}${serverMessage ? `: ${serverMessage.slice(0, 120)}` : ''}`
+        : !isJson ? 'Server mengembalikan HTML/teks, bukan JSON'
+          : serverMessage,
+    };
+  } catch (err) {
+    const message = err instanceof Error && /Timeout|Abort/.test(err.name) ? 'Timeout API upstream' : 'Koneksi API upstream gagal';
+    return { ok: false, status: 0, data: null, isJson: false, message };
   }
 }
-
-function jakartaNow(): { tanggal: string; clientDate: string } {
-  const f = new Intl.DateTimeFormat('en-GB', {
+function inputs(post: Dict): UserInput | string {
+  const storeId = str(post.storeId).toUpperCase();
+  const nik = str(post.nik);
+  const tanggal = str(post.tanggal);
+  if (!/^[A-Z0-9]{4,6}$/.test(storeId)) return 'Kode toko harus 4–6 huruf/angka.';
+  if (!/^\d{4,12}$/.test(nik)) return 'NIK harus berisi 4–12 angka.';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(tanggal)) return 'Tanggal tidak valid. Gunakan YYYY-MM-DD.';
+  const [y, m, d] = tanggal.split('-').map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  if (date.getUTCFullYear() !== y || date.getUTCMonth() !== m - 1 || date.getUTCDate() !== d) return 'Tanggal tidak valid.';
+  return { storeId, nik, tanggal };
+}
+function nowJakarta(): { date: string; time: string } {
+  const parts = new Intl.DateTimeFormat('en-GB', {
     timeZone: 'Asia/Jakarta', year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
-  });
-  const parts: Record<string, string> = {};
-  for (const p of f.formatToParts(new Date())) if (p.type !== 'literal') parts[p.type] = p.value;
-  const date = `${parts.year}-${parts.month}-${parts.day}`;
-  return { tanggal: date, clientDate: `${date} ${parts.hour}:${parts.minute}:${parts.second}` };
+  }).formatToParts(new Date());
+  const map: Record<string, string> = {};
+  for (const p of parts) if (p.type !== 'literal') map[p.type] = p.value;
+  return { date: `${map.year}-${map.month}-${map.day}`, time: `${map.hour}:${map.minute}:${map.second}` };
 }
-
-function readInputs(req: Request, posted: JsonMap | null): Inputs | string {
-  const url = new URL(req.url);
-  const value = (name: string, alt?: string): unknown => posted?.[name] ?? (alt ? posted?.[alt] : null) ?? url.searchParams.get(name) ?? (alt ? url.searchParams.get(alt) : null);
-  const storeId = asText(value('storeId', 'kodeToko')).toUpperCase();
-  const nik = asText(value('nik', 'userId'));
-  const tanggal = asText(value('tanggal', 'dateTx'));
-  const mulaiBon = Number(value('mulaiBon') ?? 1);
-  const batasBon = Number(value('batasBon') ?? 350);
-  if (!/^[A-Z0-9]{4,6}$/.test(storeId)) return 'Kode toko harus 4–6 huruf/angka.';
-  if (!/^\d{4,12}$/.test(nik)) return 'NIK harus 4–12 angka.';
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(tanggal) || Number.isNaN(Date.parse(`${tanggal}T00:00:00+07:00`))) return 'Tanggal wajib berformat YYYY-MM-DD.';
-  if (!Number.isInteger(mulaiBon) || mulaiBon < 1 || mulaiBon > 999999) return 'Nomor bon awal harus angka positif.';
-  if (!Number.isInteger(batasBon) || batasBon < 1 || batasBon > MAX_BILLS_PER_CALL) return `Batas bon harus 1–${MAX_BILLS_PER_CALL}.`;
-  return { storeId, nik, tanggal, mulaiBon, batasBon };
-}
-
-function loginUser(data: unknown): JsonMap | null {
-  const root = asObject(data);
+function loginUser(data: unknown): Dict | null {
+  const root = object(data);
   if (!root) return null;
-  const sub = asObject(root.data);
-  const options: unknown[] = [root.dataUser, sub?.dataUser, sub?.user, root.user, root.data, root.result];
-  for (const v of options) {
-    if (Array.isArray(v) && v.length) return asObject(v[0]);
-    const o = asObject(v);
-    if (o && ('bill_no' in o || 'name' in o || 'nick_name' in o)) return o;
+  const sub = object(root.data);
+  const choices = [root.dataUser, sub?.dataUser, root.user, sub?.user, root.data, root.result, root];
+  for (const value of choices) {
+    const v = Array.isArray(value) ? value[0] : value;
+    const u = object(v);
+    if (u && ('bill_no' in u || 'name' in u || 'nick_name' in u)) return u;
   }
-  return 'bill_no' in root ? root : null;
+  return null;
 }
-
-function extractRows(data: unknown, depth = 0): JsonMap[] {
-  if (depth > 7 || data == null) return [];
-  if (Array.isArray(data)) return data.flatMap(v => extractRows(v, depth + 1));
-  const obj = asObject(data);
-  if (!obj) return [];
-  const code = stringField(obj, ['plu', 'PLU', 'prdcd', 'kode_barang', 'item_code']);
-  if (code && (obj.qty !== undefined || obj.quantity !== undefined || obj.jumlah !== undefined || obj.s_qty !== undefined)) return [obj];
-  const keys = ['data', 'items', 'item', 'detail', 'details', 'list', 'rows', 'result', 'transactions', 'dataItem', 'dataDetail', 'data_table'];
-  let found: JsonMap[] = [];
-  for (const key of keys) if (obj[key] !== undefined) found = found.concat(extractRows(obj[key], depth + 1));
-  return found;
+function findRows(data: unknown, level = 0): Dict[] {
+  if (level > 9 || data == null) return [];
+  if (Array.isArray(data)) return data.flatMap(x => findRows(x, level + 1));
+  const root = object(data);
+  if (!root) return [];
+  const plu = field(root, ['plu', 'PLU', 'prdcd', 'kode_barang', 'item_code']);
+  if (plu && (root.qty !== undefined || root.quantity !== undefined || root.jumlah !== undefined || root.s_qty !== undefined)) return [root];
+  return ['data', 'items', 'item', 'detail', 'details', 'list', 'rows', 'result', 'transactions', 'dataItem', 'dataDetail', 'data_table']
+    .flatMap(k => findRows(root[k], level + 1));
 }
-
-function getItem(row: JsonMap): Item | null {
-  const plu = stringField(row, ['plu', 'PLU', 'prdcd', 'kode_barang', 'item_code']);
-  const qty = numberValue(row.qty ?? row.quantity ?? row.jumlah ?? row.s_qty);
+function itemFromRow(row: Dict): Item | null {
+  const plu = field(row, ['plu', 'PLU', 'prdcd', 'kode_barang', 'item_code']);
+  const qty = num(row.qty ?? row.quantity ?? row.jumlah ?? row.s_qty);
   if (!plu || !qty) return null;
-  const name = stringField(row, ['desc', 'descp', 'description', 'namaBarang', 'nama_barang', 'name', 'nama']);
-  const barcode = stringField(row, ['barcode', 'barCode', 'ean']);
-  return { plu, nama: name || `Item ${plu}`, barcode, qty };
-}
-
-async function enrichMissing(items: Item[], storeId: string, deadline: number): Promise<number> {
-  const missing = items.filter(x => !x.barcode || !x.nama || /^item\s/i.test(x.nama)).slice(0, 65);
-  let cursor = 0; let filled = 0;
-  const workers = Array.from({ length: Math.min(6, missing.length) }, async () => {
-    while (cursor < missing.length && Date.now() < deadline) {
-      const row = missing[cursor++];
-      const query = new URLSearchParams({ storeId, searchValue: row.plu });
-      const res = await fetchApi(`sis/master/inventory/lov_items?${query}`, storeId, 'GET');
-      if (!res.ok) continue;
-      const candidates = extractLovRows(res.data);
-      const matching = candidates.find(v => stringField(v, ['plu', 'PLU', 'prdcd']) === row.plu);
-      if (!matching) continue;
-      if (!row.barcode) row.barcode = stringField(matching, ['barcode', 'barCode']);
-      if (!row.nama || /^item\s/i.test(row.nama)) {
-        const better = stringField(matching, ['descp', 'desc', 'description', 'namaBarang', 'nama_barang', 'name']);
-        if (better) { row.nama = better; filled++; }
-      }
-    }
-  });
-  await Promise.all(workers);
-  return filled;
-}
-
-function extractLovRows(data: unknown, depth = 0): JsonMap[] {
-  if (depth > 5) return [];
-  if (Array.isArray(data)) return data.flatMap(v => extractLovRows(v, depth + 1));
-  const obj = asObject(data);
-  if (!obj) return [];
-  if (stringField(obj, ['plu', 'PLU', 'prdcd'])) return [obj];
-  return ['data', 'items', 'item', 'result', 'list', 'rows'].flatMap(k => extractLovRows(obj[k], depth + 1));
-}
-
-async function run(req: Request, posted: JsonMap | null): Promise<Response> {
-  const parsed = readInputs(req, posted);
-  if (typeof parsed === 'string') return jsonResult({ success: false, message: parsed }, 400);
-  const { storeId, nik, tanggal, mulaiBon, batasBon } = parsed;
-  const start = Date.now();
-  const deadline = start + 51500;
-  const now = jakartaNow();
-  const clientDate = tanggal === now.tanggal ? now.clientDate : `${tanggal} 23:59:59`;
-  const loginParams = new URLSearchParams({ storeId, nik, clientDate, version_app: 'V.2021.1.1' });
-  const login = await fetchApi(`so/login/cek_login?${loginParams}`, storeId, 'GET');
-  if (!login.ok) {
-    return jsonResult({ success: false, tahap: 'cek_login', message: `Gagal mengambil data NIK: ${login.error}. Periksa Api-Key, header dan hak akses toko.` }, 502);
-  }
-  const user = loginUser(login.data);
-  if (!user) return jsonResult({ success: false, tahap: 'cek_login', message: 'dataUser tidak ditemukan pada respons login. Struktur respons mungkin telah berubah.' }, 502);
-  const namaKasir = stringField(user, ['name', 'nick_name', 'nama']) || `KASIR ${nik}`;
-  const maxBill = Math.max(0, Math.trunc(numberValue(user.bill_no)));
-  const akhirBon = Math.min(maxBill, mulaiBon + batasBon - 1);
-  const totalScan = Math.max(0, akhirBon - mulaiBon + 1);
-  const warnings: string[] = [];
-  if (maxBill > akhirBon) warnings.push(`Masih ada nomor bon sampai ${maxBill}. Untuk melanjutkan, masukkan Mulai Bon = ${akhirBon + 1}.`);
-  const found = new Map<string, Item>();
-  let cursor = mulaiBon, scanned = 0, billWithItems = 0, failed = 0, fatal = 0;
-  if (totalScan > 0) {
-    const workers = Array.from({ length: Math.min(MAX_CONCURRENT, totalScan) }, async () => {
-      while (cursor <= akhirBon && Date.now() < deadline && fatal === 0) {
-        const billNo = cursor++;
-        const r = await fetchApi('pos/transaksi/retur/get_transaction', storeId, 'POST', {
-          storeId, dateTx: tanggal, userId: nik, billNo,
-        });
-        scanned++;
-        if (!r.ok) {
-          failed++;
-          if ([401, 403, 429].includes(r.status)) fatal = r.status;
-          continue;
-        }
-        const rows = extractRows(r.data);
-        if (rows.length) billWithItems++;
-        for (const row of rows) {
-          const item = getItem(row);
-          if (!item) continue;
-          const old = found.get(item.plu);
-          if (!old) found.set(item.plu, item);
-          else {
-            old.qty += item.qty;
-            if (/^item\s/i.test(old.nama) && !/^item\s/i.test(item.nama)) old.nama = item.nama;
-            if (!old.barcode) old.barcode = item.barcode;
-          }
-        }
-      }
-    });
-    await Promise.all(workers);
-  }
-  if (fatal) return jsonResult({ success: false, tahap: 'get_transaction', message: `Server menolak request detail (HTTP ${fatal}). Periksa Api-Key, limit server, dan header.` }, 502);
-  if (scanned < totalScan) warnings.push(`Pemindaian terhenti karena batas waktu. Selesai ${scanned} dari ${totalScan} bon; hasil mungkin belum lengkap.`);
-  if (failed) warnings.push(`${failed} request detail gagal atau timeout; beberapa transaksi mungkin belum terhitung.`);
-  const items = [...found.values()].sort((a, b) => a.plu.localeCompare(b.plu, 'id', { numeric: true }));
-  if (items.length && Date.now() < deadline) await enrichMissing(items, storeId, deadline);
-  const totalQty = Math.round(items.reduce((sum, x) => sum + x.qty, 0) * 1000) / 1000;
-  const result = {
-    success: true,
-    toko: storeId,
-    nik,
-    tanggal,
-    namaKasir,
-    jumlahBon: billWithItems,
-    totalBillBerdasarkanLogin: maxBill,
-    mulaiBon,
-    akhirBon,
-    scannedBills: scanned,
-    failedBills: failed,
-    jumlahPLU: items.length,
-    totalQty,
-    items,
-    warnings,
-    durasiMs: Date.now() - start,
-    sumber: 'app.alfastore.co.id/prd/api',
+  return {
+    plu,
+    nama: field(row, ['desc', 'descp', 'description', 'namaBarang', 'nama_barang', 'name', 'nama']) || `Item ${plu}`,
+    barcode: field(row, ['barcode', 'barCode', 'ean']),
+    qty,
   };
-  return jsonResult(result);
+}
+function addItem(map: Map<string, Item>, item: Item) {
+  const curr = map.get(item.plu);
+  if (!curr) { map.set(item.plu, item); return; }
+  curr.qty += item.qty;
+  if ((!curr.nama || /^Item\s/i.test(curr.nama)) && item.nama && !/^Item\s/i.test(item.nama)) curr.nama = item.nama;
+  if (!curr.barcode && item.barcode) curr.barcode = item.barcode;
+}
+function lovRows(data: unknown, level = 0): Dict[] {
+  if (level > 7 || data == null) return [];
+  if (Array.isArray(data)) return data.flatMap(x => lovRows(x, level + 1));
+  const o = object(data);
+  if (!o) return [];
+  if (field(o, ['plu', 'PLU', 'prdcd'])) return [o];
+  return ['data', 'items', 'item', 'result', 'list', 'rows'].flatMap(k => lovRows(o[k], level + 1));
+}
+async function init(data: UserInput): Promise<Response> {
+  const now = nowJakarta();
+  const clientDate = data.tanggal === now.date ? `${now.date} ${now.time}` : `${data.tanggal} 23:59:59`;
+  const query = new URLSearchParams({ storeId: data.storeId, nik: data.nik, clientDate, version_app: 'V.2021.1.1' });
+  const login = await api(`so/login/cek_login?${query}`, data.storeId, 'GET');
+  const user = login.ok ? loginUser(login.data) : null;
+  let maxBill: number | null = null;
+  if (user && 'bill_no' in user) {
+    const n = num(user.bill_no);
+    if (n >= 0 && Number.isInteger(n)) maxBill = n;
+  }
+  const namaKasir = user ? field(user, ['name', 'nick_name', 'nama']) : '';
+  const warnings: string[] = [];
+  if (!login.ok) {
+    if (login.status === 404) warnings.push('Endpoint cek_login merespons HTTP 404. Pencarian detail tetap dilanjutkan otomatis tanpa bergantung pada endpoint tersebut.');
+    else warnings.push(`Pemeriksaan identitas NIK tidak tersedia (${login.message}). Detail penjualan tetap dicoba.`);
+  } else if (maxBill === null) {
+    warnings.push('Server tidak mengirim bill_no. Batas akhir bon tidak diketahui; pencarian menggunakan deteksi jeda transaksi dan hasilnya mungkin belum lengkap.');
+  }
+  return respond({ success: true, action: 'init',
+    namaKasir: namaKasir || `NIK ${data.nik}`, maxBill, pageSize: PAGE_SIZE,
+    maxAutoScan: MAX_AUTOSCAN_BON, warnings,
+    metode: maxBill === null ? 'otomatis-heuristik' : 'otomatis-sampai-bill_no',
+  });
+}
+async function scan(data: UserInput, req: Dict): Promise<Response> {
+  const from = Number(req.fromBon);
+  const count = Number(req.count || PAGE_SIZE);
+  if (!Number.isSafeInteger(from) || from < 1 || from > MAX_AUTOSCAN_BON) return respond({ success: false, message: `Posisi pemindaian di luar batas server (1–${MAX_AUTOSCAN_BON}).` }, 400);
+  if (!Number.isSafeInteger(count) || count < 1 || count > PAGE_SIZE || from + count - 1 > MAX_AUTOSCAN_BON) return respond({ success: false, message: 'Ukuran halaman pemindaian tidak valid.' }, 400);
+  const found = new Map<string, Item>();
+  const marker: Array<boolean | null> = Array(count).fill(null);
+  const statuses: Record<string, number> = {};
+  let next = 0, successfulResponses = 0, foundBills = 0, failed = 0;
+  const errors: string[] = [];
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, count) }, async () => {
+    while (next < count) {
+      const index = next++;
+      const billNo = from + index;
+      const r = await api('pos/transaksi/retur/get_transaction', data.storeId, 'POST', {
+        storeId: data.storeId, dateTx: data.tanggal, userId: data.nik, billNo,
+      });
+      if (!r.ok) {
+        failed++;
+        const code = String(r.status || 'koneksi');
+        statuses[code] = (statuses[code] || 0) + 1;
+        if (errors.length < 3) errors.push(`Bon ${billNo}: ${r.message}`);
+        continue;
+      }
+      successfulResponses++;
+      const rows = findRows(r.data);
+      let hasData = false;
+      for (const row of rows) {
+        const item = itemFromRow(row);
+        if (!item) continue;
+        hasData = true;
+        addItem(found, item);
+      }
+      if (hasData) foundBills++;
+      marker[index] = hasData;
+    }
+  }));
+  if (successfulResponses === 0) {
+    const all404 = statuses['404'] === count;
+    const unauthorized = Boolean(statuses['401'] || statuses['403']);
+    const message = all404
+      ? 'API detail transaksi mengembalikan HTTP 404 untuk seluruh nomor bon. Endpoint pos/transaksi/retur/get_transaction mungkin tidak tersedia pada server upstream. Ini bukan kesalahan jumlah bon atau login. Periksa base URL dan route server Alfastore.'
+      : unauthorized
+        ? 'API detail transaksi menolak akses (HTTP 401/403). Periksa Api-Key, Store-Id, User-Id, Branch-Id, dan hak akses akun resmi.'
+        : 'Semua permintaan detail transaksi gagal. Periksa jaringan dan ketersediaan endpoint upstream.';
+    return respond({ success: false, tahap: 'get_transaction', message, statuses, errors }, 502);
+  }
+  const items = [...found.values()].sort((a, b) => a.plu.localeCompare(b.plu, 'id', { numeric: true }));
+  return respond({ success: true, action: 'scan', fromBon: from, akhirBon: from + count - 1,
+    scanned: count, successfulResponses, foundBills, failed, statuses, errors, marker, items });
+}
+async function enrich(data: UserInput, req: Dict): Promise<Response> {
+  const raw = req.plus;
+  if (!Array.isArray(raw) || raw.length > 20 || raw.length < 1) return respond({ success: false, message: 'Daftar PLU tidak valid (maks. 20).' }, 400);
+  const plus = raw.map(str);
+  if (plus.some(p => !/^[A-Za-z0-9._-]{1,32}$/.test(p))) return respond({ success: false, message: 'Format PLU tidak valid.' }, 400);
+  const found: Record<string, { nama: string; barcode: string }> = {};
+  let cursor = 0, failures = 0;
+  await Promise.all(Array.from({ length: Math.min(5, plus.length) }, async () => {
+    while (cursor < plus.length) {
+      const plu = plus[cursor++];
+      const query = new URLSearchParams({ storeId: data.storeId, searchValue: plu });
+      const r = await api(`sis/master/inventory/lov_items?${query}`, data.storeId, 'GET');
+      if (!r.ok) { failures++; continue; }
+      const matching = lovRows(r.data).find(v => field(v, ['plu', 'PLU', 'prdcd']) === plu);
+      if (!matching) continue;
+      found[plu] = { nama: field(matching, ['descp', 'desc', 'description', 'namaBarang', 'nama_barang', 'name']),
+        barcode: field(matching, ['barcode', 'barCode']) };
+    }
+  }));
+  return respond({ success: true, action: 'enrich', found, failures });
 }
 
-export async function GET(req: Request): Promise<Response> {
-  return run(req, null);
+export async function GET(): Promise<Response> {
+  return respond({ success: true, message: 'Endpoint /api/sql aktif. Untuk mencari penjualan gunakan POST dari index.php.', metode: 'scan bertahap' });
 }
-
 export async function POST(req: Request): Promise<Response> {
-  let posted: JsonMap | null = null;
-  try { posted = asObject(await req.json()); }
-  catch { return jsonResult({ success: false, message: 'Body wajib JSON.' }, 400); }
-  return run(req, posted);
-}
-
-export async function OPTIONS(): Promise<Response> {
-  return new Response(null, { status: 204, headers: HTTP_HEADERS });
+  let post: Dict | null = null;
+  try { post = object(await req.json()); } catch { /* invalid */ }
+  if (!post) return respond({ success: false, message: 'Body JSON tidak valid.' }, 400);
+  const parsed = inputs(post);
+  if (typeof parsed === 'string') return respond({ success: false, message: parsed }, 400);
+  switch (str(post.action)) {
+    case 'init': return init(parsed);
+    case 'scan': return scan(parsed, post);
+    case 'enrich': return enrich(parsed, post);
+    default: return respond({ success: false, message: 'Action harus init, scan, atau enrich.' }, 400);
+  }
 }

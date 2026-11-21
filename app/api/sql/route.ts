@@ -15,6 +15,7 @@
  * route hilang tetap dilaporkan secara jujur, bukan dianggap barang kosong.
  */
 
+const BUILD_VERSION = 'sql-semua-v3.1';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -39,7 +40,7 @@ const OUT_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
 };
 function respond(body: Dict, status = 200) {
-  return new Response(JSON.stringify(body), { status, headers: OUT_HEADERS });
+  return new Response(JSON.stringify({ version: BUILD_VERSION, ...body }), { status, headers: OUT_HEADERS });
 }
 function object(v: unknown): Dict | null {
   return v && typeof v === 'object' && !Array.isArray(v) ? v as Dict : null;
@@ -279,7 +280,7 @@ async function enrich(data: UserInput, req: Dict): Promise<Response> {
 }
 
 export async function GET(): Promise<Response> {
-  return respond({ success: true, message: 'Endpoint /api/sql aktif. Untuk mencari penjualan gunakan POST dari index.php.', metode: 'scan bertahap' });
+  return respond({ success: true, message: 'Endpoint /api/sql aktif. Untuk mencari seluruh penjualan NIK gunakan POST dari index.php yang seversi.', metode: 'pemindaian otomatis bertahap', actions: ['init', 'scan', 'enrich'] });
 }
 export async function POST(req: Request): Promise<Response> {
   let post: Dict | null = null;
@@ -291,6 +292,6 @@ export async function POST(req: Request): Promise<Response> {
     case 'init': return init(parsed);
     case 'scan': return scan(parsed, post);
     case 'enrich': return enrich(parsed, post);
-    default: return respond({ success: false, message: 'Action harus init, scan, atau enrich.' }, 400);
+    default: return respond({ success: false, message: 'Action tidak dikenali. Upload route.ts dan index.php dari ZIP versi sql-semua-v3.1 secara bersamaan.' }, 400);
   }
 }

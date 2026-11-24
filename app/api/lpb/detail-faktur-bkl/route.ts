@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 const ALFASTORE_URL =
   "https://app.alfastore.co.id/prd/api/lpb/tablet/lpb/get_det_faktur_bkl/";
 
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
@@ -10,14 +11,22 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
 
-    const storeId = searchParams.get("storeId");
+    const storeId = "M604";
+    const requestedStoreId = searchParams.get("storeId");
+
+    if (requestedStoreId && requestedStoreId.toUpperCase() !== storeId) {
+      return NextResponse.json(
+        { error: true, message: "Kode toko harus M604" },
+        { status: 400 }
+      );
+    }
     const faktur = searchParams.get("faktur");
 
-    if (!storeId || !faktur) {
+    if (!faktur) {
       return NextResponse.json(
         {
           error: true,
-          message: "storeId dan faktur wajib diisi",
+          message: "faktur wajib diisi",
         },
         { status: 400 }
       );
@@ -28,73 +37,45 @@ export async function GET(request: NextRequest) {
     upstreamUrl.searchParams.set("storeId", storeId);
     upstreamUrl.searchParams.set("faktur", faktur);
 
-    const apiKey = process.env.ALFA_API_KEY;
-    const androidId = process.env.ALFA_ANDROID_ID;
-    const userId = process.env.ALFA_USER_ID;
-    const branchId = process.env.ALFA_BRANCH_ID;
-
-    if (!apiKey || !androidId || !userId || !branchId) {
-      return NextResponse.json(
-        {
-          error: true,
-          message: "Konfigurasi AlfaStore belum lengkap",
-        },
-        { status: 500 }
-      );
-    }
+    // Header dari konfigurasi yang diberikan. Simpan file ini di server privat.
+    const apiKey = "iVOZX9MLmKrj1L8R23uF1aryMR1vGMXG";
+    const androidId = "712f8db18eeb1816";
+    const userId = "23067884";
+    const branchId = "MZ01";
 
     const response = await fetch(upstreamUrl.toString(), {
       method: "GET",
       cache: "no-store",
 
+      redirect: "error",
       headers: {
-        Accept: "*/*",
-
-        "App-Name": "LPB-CLOUD",
-        "Version-App": "V.2025.11.25.04",
-        "Version-Code": "30",
-
-        "User-Agent":
+        "Host": "app.alfastore.co.id",
+        "app-name": "LPB-CLOUD",
+        "version-app": "V.2025.11.25.04",
+        "version-code": "30",
+        "user-agent":
           "Dalvik/2.1.0 (Linux; U; Android 15; Infinix X6885 Build/AP3A.240905.015.A2)",
-
-        "App-Uid": "",
-
-        "User-Id": userId,
-
-        "Store-Id": storeId,
-
-        "Store-Id-Ext": "",
-
-        "Shard-Id": "",
-
-        "Ip-Addr": "10.1.10.1",
-
-        Sn: "",
-
-        "Api-Key": apiKey,
-
-        AndroidId: androidId,
-
-        "Branch-Id": branchId,
-
-        "Class-Store": "",
-
-        "Company-Id": "",
-        "Company-Ext": "",
-
-        Platform: "ANDROID",
-
-        "Mac-Addr": androidId,
+        "app-uid": "",
+        "user-id": userId,
+        "store-id": storeId,
+        "store-id-ext": "",
+        "shard-id": "",
+        "ip-addr": "10.1.10.1",
+        "sn": "",
+        "api-key": apiKey,
+        "androidid": androidId,
+        "branch-id": branchId,
+        "class-store": "",
+        "company-id": "",
+        "company-ext": "",
+        "platform": "ANDROID",
+        "mac-addr": androidId,
+        "accept-encoding": "gzip",
+        "accept": "*/*",
       },
     });
 
     const body = await response.text();
-
-    console.log("==============================");
-    console.log("DET FAKTUR BKL URL:", upstreamUrl.toString());
-    console.log("STATUS:", response.status);
-    console.log("BODY:", body);
-    console.log("==============================");
 
     return new NextResponse(body, {
       status: response.status,

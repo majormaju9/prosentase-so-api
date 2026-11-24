@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const ALFASTORE_URL =
-  "https://app.alfastore.co.id/prd/api/lpb/tablet/lpb/get_det_faktur_bkl/";
+const ALFASTORE_BASE = "https://app.alfastore.co.id/prd/api/lpb/tablet/lpb/";
+const ENDPOINTS = {
+  list: "get_faktur/",
+  detail: "get_det_faktur_bkl/",
+} as const;
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,6 +13,10 @@ export const revalidate = 0;
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
+
+    if (searchParams.get("health") === "1") {
+      return NextResponse.json({ ok: true, source: "vercel-route", version: "lpb-404-v2" });
+    }
 
     const storeId = "M604";
     const requestedStoreId = searchParams.get("storeId");
@@ -20,22 +27,18 @@ export async function GET(request: NextRequest) {
         { status: 400 }
       );
     }
-    const faktur = searchParams.get("faktur");
-
-    if (!faktur) {
-      return NextResponse.json(
-        {
-          error: true,
-          message: "faktur wajib diisi",
-        },
-        { status: 400 }
-      );
+    const faktur = searchParams.get("faktur")?.trim();
+    const mode = searchParams.get("mode") || (faktur ? "detail" : "list");
+    if (mode !== "list" && mode !== "detail") {
+      return NextResponse.json({ error: true, message: "mode harus list atau detail" }, { status: 400 });
+    }
+    if (mode === "detail" && !faktur) {
+      return NextResponse.json({ error: true, message: "faktur wajib diisi untuk mode detail" }, { status: 400 });
     }
 
-    const upstreamUrl = new URL(ALFASTORE_URL);
-
+    const upstreamUrl = new URL(ENDPOINTS[mode], ALFASTORE_BASE);
     upstreamUrl.searchParams.set("storeId", storeId);
-    upstreamUrl.searchParams.set("faktur", faktur);
+    if (faktur) upstreamUrl.searchParams.set("faktur", faktur);
 
     // Header dari konfigurasi yang diberikan. Simpan file ini di server privat.
     const apiKey = "iVOZX9MLmKrj1L8R23uF1aryMR1vGMXG";
@@ -76,6 +79,15 @@ export async function GET(request: NextRequest) {
     });
 
     const body = await response.text();
+    if (response.status === 404) {
+      return NextResponse.json({
+        error: true,
+        source: "upstream",
+        upstreamStatus: 404,
+        endpoint: ENDPOINTS[mode],
+        message: "Route Vercel aktif, tetapi endpoint AlfaStore mengembalikan HTTP 404. Periksa path, metode HTTP, parameter dan hak akses resmi API.",
+      }, { status: 404, headers: { "Cache-Control": "no-store" } });
+    }
 
     return new NextResponse(body, {
       status: response.status,
@@ -89,13 +101,14 @@ export async function GET(request: NextRequest) {
       },
     });
 
-  } catch (error) {
-    console.error("GET DET FAKTUR BKL ERROR:", error);
+  } catch {
+    console.error("LPB upstream request failed");
 
     return NextResponse.json(
       {
         error: true,
-        message: "Gagal mengambil detail faktur BKL AlfaStore",
+        source: "vercel-route",
+        message: "Gagal terhubung ke AlfaStore atau terjadi redirect upstream",
       },
       { status: 500 }
     );
